@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dual-Target Validator</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{--bg:#08090d;--surface:#0f1117;--card:#161822;--border:rgba(255,255,255,.06);--border-h:rgba(255,255,255,.1);--text:#e2e8f0;--text2:#8892a8;--accent:#00d4ff;--accent2:#7c3aed;--green:#10b981;--red:#ef4444;--amber:#f59e0b;--grad:linear-gradient(135deg,#00d4ff,#7c3aed)}
+body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
+/* Header */
+.header{padding:20px 32px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:var(--surface)}
+.header h1{font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
+.header h1 .icon{width:32px;height:32px;border-radius:8px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-size:16px}
+.header .status-pill{padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+.pill-idle{background:rgba(136,146,168,.15);color:var(--text2)}
+.pill-running{background:rgba(0,212,255,.15);color:var(--accent);animation:pulse 2s infinite}
+.pill-done{background:rgba(16,185,129,.15);color:var(--green)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+/* Layout */
+.main{padding:24px 32px;max-width:1400px;margin:0 auto}
+/* Stats Row */
+.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:24px}
+.stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden;transition:border-color .2s}
+.stat-card:hover{border-color:var(--border-h)}
+.stat-card .label{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
+.stat-card .value{font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace}
+.stat-card .bar{position:absolute;bottom:0;left:0;height:3px;border-radius:0 2px 0 0;transition:width .6s ease}
+.stat-card.total .value{color:var(--text)}.stat-card.total .bar{background:var(--accent);width:100%}
+.stat-card.success .value{color:var(--green)}.stat-card.success .bar{background:var(--green)}
+.stat-card.failed .value{color:var(--red)}.stat-card.failed .bar{background:var(--red)}
+.stat-card.pending .value{color:var(--amber)}.stat-card.pending .bar{background:var(--amber)}
+.stat-card.errors .value{color:var(--red)}.stat-card.errors .bar{background:var(--red)}
+/* Controls */
+.controls{display:flex;gap:12px;margin-bottom:24px;align-items:center}
+.btn{padding:10px 24px;border-radius:8px;border:none;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px}
+.btn-start{background:var(--grad);color:#fff}.btn-start:hover{opacity:.85}
+.btn-start:disabled{opacity:.4;cursor:not-allowed}
+.btn-stop{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.2)}.btn-stop:hover{background:rgba(239,68,68,.25)}
+.btn-stop:disabled{opacity:.3;cursor:not-allowed}
+.btn-secondary{background:var(--card);color:var(--text2);border:1px solid var(--border)}.btn-secondary:hover{border-color:var(--border-h);color:var(--text)}
+.concurrency-control{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text2);font-size:13px}
+.concurrency-control input{width:60px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center}
+/* Progress */
+.progress-wrap{margin-bottom:24px;display:none}
+.progress-bar{height:4px;background:var(--card);border-radius:4px;overflow:hidden}
+.progress-fill{height:100%;background:var(--grad);border-radius:4px;transition:width .4s ease;width:0}
+.progress-text{font-size:12px;color:var(--text2);margin-top:6px;text-align:right;font-family:'JetBrains Mono',monospace}
+/* Content Grid */
+.content{display:grid;grid-template-columns:1fr 380px;gap:20px}
+@media(max-width:1100px){.content{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}}
+/* Table */
+.table-wrap{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
+.table-header{padding:16px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:8px}
+table{width:100%;border-collapse:collapse}
+th{padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)}
+td{padding:12px 16px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
+tr:last-child td{border-bottom:none}
+tr.row-running{background:rgba(0,212,255,.03)}
+tr.row-done{opacity:.85}
+.email-cell{font-family:'JetBrains Mono',monospace;font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Badges */
+.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
+.badge-pending{background:rgba(136,146,168,.1);color:var(--text2)}
+.badge-running{background:rgba(0,212,255,.12);color:var(--accent);animation:pulse 1.5s infinite}
+.badge-success{background:rgba(16,185,129,.12);color:var(--green)}
+.badge-failed{background:rgba(239,68,68,.12);color:var(--red)}
+.badge-error{background:rgba(239,68,68,.18);color:var(--red)}
+.badge-skipped{background:rgba(136,146,168,.1);color:var(--text2)}
+.row-num{color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:12px;width:30px}
+/* Log Panel */
+.log-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;max-height:600px}
+.log-header{padding:16px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text2);display:flex;justify-content:space-between;align-items:center}
+.log-body{flex:1;overflow-y:auto;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.8}
+.log-line{display:flex;gap:8px;opacity:0;animation:fadeIn .3s forwards}
+@keyframes fadeIn{to{opacity:1}}
+.log-time{color:var(--text2);flex-shrink:0}
+.log-level{font-weight:600;flex-shrink:0;width:36px}
+.log-level.INFO{color:var(--accent)}.log-level.OK{color:var(--green)}.log-level.WARN{color:var(--amber)}.log-level.ERR{color:var(--red)}
+.log-msg{color:var(--text);word-break:break-all}
+/* Toast */
+.toast{position:fixed;bottom:24px;right:24px;padding:14px 20px;border-radius:10px;font-size:13px;font-weight:500;z-index:999;transform:translateY(100px);opacity:0;transition:all .3s ease}
+.toast.show{transform:translateY(0);opacity:1}
+.toast-error{background:rgba(239,68,68,.9);color:#fff}
+.toast-success{background:rgba(16,185,129,.9);color:#fff}
+/* Scrollbar */
+::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-h);border-radius:3px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1><div class="icon">⚡</div> Dual-Target Validator</h1>
+  <div id="statusPill" class="status-pill pill-idle">Idle</div>
+</div>
+
+<div class="main">
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat-card total"><div class="label">Total Tests</div><div class="value" id="statTotal">0</div><div class="bar"></div></div>
+    <div class="stat-card success"><div class="label">Success</div><div class="value" id="statSuccess">0</div><div class="bar"></div></div>
+    <div class="stat-card failed"><div class="label">Failed</div><div class="value" id="statFailed">0</div><div class="bar"></div></div>
+    <div class="stat-card pending"><div class="label">Pending</div><div class="value" id="statPending">0</div><div class="bar"></div></div>
+    <div class="stat-card errors"><div class="label">Errors</div><div class="value" id="statErrors">0</div><div class="bar"></div></div>
+  </div>
+
+  <!-- Controls -->
+  <div class="controls">
+    <button class="btn btn-start" id="btnStart" onclick="startAutomation()">▶ Start All</button>
+    <button class="btn btn-stop" id="btnStop" onclick="stopAutomation()" disabled>⏹ Stop</button>
+    <button class="btn btn-secondary" onclick="refreshCSV()">↻ Reload CSV</button>
+    <div class="concurrency-control">
+      <span style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace">5 creds × 2 sites = 10 max sessions</span>
+    </div>
+  </div>
+
+  <!-- Progress -->
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    <div class="progress-text" id="progressText">0 / 0</div>
+  </div>
+
+  <!-- Content -->
+  <div class="content">
+    <div class="table-wrap">
+      <div class="table-header">📋 Credential Queue</div>
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr>
+            <th>#</th><th>Email</th><th id="thSite1">Joe</th><th id="thSite2">Ignition</th><th>Status</th>
+          </tr></thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </div>
+    <div class="log-panel">
+      <div class="log-header"><span>📡 Live Log</span><button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="clearLog()">Clear</button></div>
+      <div class="log-body" id="logBody"></div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ─── State ───
+let ws = null;
+let credentials = [];
+let rows = [];
+let targets = ['joe', 'ignition'];
+let isRunning = false;
+
+// ─── WebSocket ───
+function connect() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  ws = new WebSocket(`${proto}://${location.host}`);
+
+  ws.onopen = () => addLog('INFO', 'Connected to server');
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    switch (msg.type) {
+      case 'init': handleInit(msg.data); break;
+      case 'started': handleStarted(msg.data); break;
+      case 'row-update': handleRowUpdate(msg.data); break;
+      case 'log': handleLog(msg.data); break;
+      case 'complete': handleComplete(msg.data); break;
+      case 'stopping': addLog('WARN', 'Stopping...'); break;
+      case 'credentials': handleCredentials(msg.data); break;
+      case 'error': showToast(msg.data.message, 'error'); addLog('ERR', msg.data.message); break;
+    }
+  };
+
+  ws.onclose = () => {
+    addLog('WARN', 'Disconnected — reconnecting in 3s...');
+    setTimeout(connect, 3000);
+  };
+}
+
+function handleInit(data) {
+  credentials = data.credentials || [];
+  targets = data.config?.targets || targets;
+  if (data.rows && data.rows.length > 0) { rows = data.rows; }
+  if (data.isRunning) { setRunningState(true); }
+  updateHeaders();
+  renderTable();
+  updateStats();
+  document.getElementById('concurrency').value = data.config?.concurrency || 10;
+}
+
+function handleStarted(data) {
+  setRunningState(true);
+  targets = data.targets || targets;
+  rows = [];
+  updateHeaders();
+  document.getElementById('progressWrap').style.display = 'block';
+}
+
+function handleRowUpdate(data) {
+  rows[data.rowIndex] = data;
+  renderRowInPlace(data.rowIndex);
+  updateStats();
+  updateProgress();
+}
+
+function handleLog(data) {
+  addLog(data.level, data.message);
+}
+
+function handleComplete(data) {
+  rows = data.rows || rows;
+  setRunningState(false);
+  renderTable();
+  updateStats();
+  updateProgress();
+  showToast('Automation complete!', 'success');
+}
+
+function handleCredentials(data) {
+  credentials = data.credentials || [];
+  rows = [];
+  renderTable();
+  updateStats();
+  showToast(`Loaded ${credentials.length} credentials`, 'success');
+}
+
+// ─── Actions ───
+function startAutomation() {
+  ws.send(JSON.stringify({ type: 'start' }));
+}
+
+function stopAutomation() {
+  ws.send(JSON.stringify({ type: 'stop' }));
+}
+
+function refreshCSV() {
+  ws.send(JSON.stringify({ type: 'refresh-csv' }));
+}
+
+// ─── UI Updates ───
+function setRunningState(running) {
+  isRunning = running;
+  document.getElementById('btnStart').disabled = running;
+  document.getElementById('btnStop').disabled = !running;
+  const pill = document.getElementById('statusPill');
+  pill.className = 'status-pill ' + (running ? 'pill-running' : 'pill-idle');
+  pill.textContent = running ? 'Running' : 'Idle';
+}
+
+function updateHeaders() {
+  const th1 = document.getElementById('thSite1');
+  const th2 = document.getElementById('thSite2');
+  if (targets[0]) th1.textContent = targets[0].charAt(0).toUpperCase() + targets[0].slice(1);
+  if (targets[1]) th2.textContent = targets[1].charAt(0).toUpperCase() + targets[1].slice(1);
+}
+
+function renderTable() {
+  const body = document.getElementById('tableBody');
+  const count = rows.length > 0 ? rows.length : credentials.length;
+  let html = '';
+  for (let i = 0; i < count; i++) {
+    html += buildRowHTML(i);
+  }
+  body.innerHTML = html;
+  document.getElementById('statTotal').textContent = count * targets.length;
+}
+
+function buildRowHTML(i) {
+  const row = rows[i];
+  const email = row ? row.email : (credentials[i]?.email || '—');
+  const status = row ? row.status : 'pending';
+  const cls = status === 'running' ? 'row-running' : status === 'done' ? 'row-done' : '';
+
+  let s1 = row?.sites?.[targets[0]] || null;
+  let s2 = row?.sites?.[targets[1]] || null;
+
+  return `<tr id="row-${i}" class="${cls}">
+    <td class="row-num">${i + 1}</td>
+    <td class="email-cell" title="${email}">${email}</td>
+    <td>${badgeHTML(s1)}</td>
+    <td>${badgeHTML(s2)}</td>
+    <td>${statusBadge(status)}</td>
+  </tr>`;
+}
+
+function renderRowInPlace(i) {
+  const existing = document.getElementById('row-' + i);
+  if (existing) {
+    const temp = document.createElement('tbody');
+    temp.innerHTML = buildRowHTML(i);
+    existing.replaceWith(temp.firstElementChild);
+  } else {
+    document.getElementById('tableBody').insertAdjacentHTML('beforeend', buildRowHTML(i));
+  }
+}
+
+function badgeHTML(site) {
+  if (!site) return '<span class="badge badge-pending">—</span>';
+  const o = site.outcome;
+  const cls = o === 'SUCCESS' ? 'success' : o === 'FAILED' ? 'failed' : o === 'ERROR' ? 'error' : o === 'running' ? 'running' : 'pending';
+  const label = o === 'running' ? '⟳' : o === 'pending' ? '—' : o;
+  return `<span class="badge badge-${cls}">${label}</span>`;
+}
+
+function statusBadge(s) {
+  const map = { pending: ['pending','Queued'], running: ['running','Running'], done: ['success','Done'], skipped: ['skipped','Skip'] };
+  const [cls, label] = map[s] || ['pending', s];
+  return `<span class="badge badge-${cls}">${label}</span>`;
+}
+
+function updateStats() {
+  let success = 0, failed = 0, pending = 0, errors = 0;
+  for (const row of rows) {
+    for (const t of targets) {
+      const o = row.sites?.[t]?.outcome;
+      if (o === 'SUCCESS') success++;
+      else if (o === 'FAILED') failed++;
+      else if (o === 'ERROR' || o === 'BLOCKED') errors++;
+      else pending++;
+    }
+  }
+  if (rows.length === 0) pending = credentials.length * targets.length;
+  document.getElementById('statTotal').textContent = (rows.length || credentials.length) * targets.length;
+  document.getElementById('statSuccess').textContent = success;
+  document.getElementById('statFailed').textContent = failed;
+  document.getElementById('statPending').textContent = pending;
+  document.getElementById('statErrors').textContent = errors;
+
+  // Animate progress bars on stat cards
+  const total = Math.max((rows.length || credentials.length) * targets.length, 1);
+  setBarWidth('.stat-card.success .bar', success / total * 100);
+  setBarWidth('.stat-card.failed .bar', failed / total * 100);
+  setBarWidth('.stat-card.errors .bar', errors / total * 100);
+}
+
+function setBarWidth(sel, pct) {
+  const el = document.querySelector(sel);
+  if (el) el.style.width = Math.min(pct, 100) + '%';
+}
+
+function updateProgress() {
+  const done = rows.filter(r => r.status === 'done' || r.status === 'skipped').length;
+  const total = rows.length || credentials.length;
+  const pct = total > 0 ? (done / total * 100) : 0;
+  document.getElementById('progressFill').style.width = pct + '%';
+  document.getElementById('progressText').textContent = `${done} / ${total} rows`;
+  if (done === total && total > 0) {
+    document.getElementById('statusPill').className = 'status-pill pill-done';
+    document.getElementById('statusPill').textContent = 'Complete';
+  }
+}
+
+// ─── Log ───
+function addLog(level, message) {
+  const body = document.getElementById('logBody');
+  const time = new Date().toLocaleTimeString('en-AU', { hour12: false });
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-msg">${escapeHtml(message)}</span>`;
+  body.appendChild(div);
+  body.scrollTop = body.scrollHeight;
+  // Keep max 200 lines
+  while (body.children.length > 200) body.removeChild(body.firstChild);
+}
+
+function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+
+function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+// ─── Toast ───
+function showToast(msg, type) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast toast-' + type + ' show';
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// ─── Init ───
+connect();
+</script>
+</body>
+</html>

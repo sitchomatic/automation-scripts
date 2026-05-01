@@ -1,0 +1,5 @@
+{
+    "git.openRepositoryInParentFolders": "never",
+    "npm.exclude": "",
+    "python.terminal.executeInFileDir": true
+}
