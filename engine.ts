@@ -286,34 +286,37 @@ export class AutomationEngine extends EventEmitter {
     site: SiteConfig,
     cred: Credential
   ): Promise<boolean> {
+    // ── Navigate ──
     await page.goto(site.url, { waitUntil: "networkidle", timeout: 30000 });
-    await this.sleep(1000 + Math.random() * 1000);
+    await this.sleep(1000);
+    await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
-    // Fill email with human-like jitter
+    // ── Fill email with human-like jitter ──
     await page.fill(site.selectors.username, "");
     await page.click(site.selectors.username);
     await this.sleep(200 + Math.random() * 300);
     for (const ch of cred.email) {
       await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
     }
+    await this.sleep(1000);
+    await this.captureScreenshot(page, `${site.name}:email-filled`);
 
-    await this.sleep(300 + Math.random() * 400);
-
-    // Fill password
+    // ── Fill password ──
     await page.fill(site.selectors.password, "");
     await page.click(site.selectors.password);
     await this.sleep(200 + Math.random() * 300);
     for (const ch of cred.password) {
       await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
     }
+    await this.sleep(1000);
+    await this.captureScreenshot(page, `${site.name}:password-filled`);
 
-    await this.sleep(300 + Math.random() * 400);
-
-    // Submit
+    // ── Submit ──
     await page.click(site.selectors.submit);
     await this.sleep(3000 + Math.random() * 2000);
+    await this.captureScreenshot(page, `${site.name}:post-submit`);
 
-    // Check for success
+    // ── Check for success ──
     const content = await page.content();
     const url = page.url();
     const isSuccess =
@@ -324,7 +327,19 @@ export class AutomationEngine extends EventEmitter {
       content.includes("lobby") ||
       !url.includes("login");
 
+    await this.captureScreenshot(page, `${site.name}:result-${isSuccess ? "success" : "failed"}`);
     return isSuccess;
+  }
+
+  /** Capture a screenshot and emit it as a log event */
+  private async captureScreenshot(page: Page, label: string): Promise<void> {
+    try {
+      const b64 = await page.screenshot({ type: "jpeg", quality: 50 }).then((buf) => buf.toString("base64"));
+      this.emit("screenshot", { label, base64: b64, timestamp: new Date().toISOString() });
+      this.log("SNAP", `📸 ${label}`);
+    } catch {
+      this.log("WARN", `Screenshot failed: ${label}`);
+    }
   }
 
   private writeResultsCSV(targets: SiteConfig[]): void {
