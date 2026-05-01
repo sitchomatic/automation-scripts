@@ -75,7 +75,8 @@ export const DEFAULT_TARGETS: SiteConfig[] = [
   },
 ];
 
-// HARD CAP: 5 credentials concurrently × 2 sites = 10 max sessions. Do NOT change.
+// Concurrency policy: default 3, absolute max 5 (× 2 sites = 10 max sessions)
+const DEFAULT_CONCURRENCY = 3;
 const MAX_CONCURRENT_CREDENTIALS = 5;
 
 // ─── Engine ───────────────────────────────────────────────────────────────────
@@ -144,8 +145,8 @@ export class AutomationEngine extends EventEmitter {
       targets: targets.map((t) => t.name),
     });
 
-    // Force-cap concurrency regardless of what config says
-    const concurrency = MAX_CONCURRENT_CREDENTIALS;
+    // Clamp concurrency: default 3, absolute max 5 — never exceeded
+    const concurrency = Math.min(Math.max(config.concurrency || DEFAULT_CONCURRENCY, 1), MAX_CONCURRENT_CREDENTIALS);
     this.log("INFO", `Starting automation: ${credentials.length} credentials × ${targets.length} targets`);
     this.log("INFO", `Concurrency: ${concurrency} creds (${concurrency * targets.length} max sessions) | Max retries: ${config.maxRetries}`);
 
@@ -178,12 +179,9 @@ export class AutomationEngine extends EventEmitter {
               },
             ],
             browserSettings: {
-              advancedStealth: true,
-              verified: true,
               recordSession: true,
               logSession: true,
               solveCaptchas: true,
-              os: "windows",
             },
             keepAlive: true,
           });

@@ -70,7 +70,7 @@ wss.on("connection", (ws) => {
           projectId: PROJECT_ID ? `${PROJECT_ID.substring(0, 8)}...` : "",
           hasApiKey: !!API_KEY,
           hasProjectId: !!PROJECT_ID,
-          concurrency: 5, // hardcoded: 5 creds × 2 sites = 10 max sessions
+          concurrency: 3, // default 3, engine caps at max 5
           maxRetries: 2,
           targets: DEFAULT_TARGETS.map((t) => t.name),
         },
@@ -110,11 +110,11 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          // HARDCODED: 5 credentials × 2 sites = 10 max sessions. Client config ignored.
+          // Default 3 concurrent credentials. Engine clamps to absolute max of 5.
           const config: EngineConfig = {
             apiKey: API_KEY,
             projectId: PROJECT_ID,
-            concurrency: 5,
+            concurrency: 3,
             maxRetries: 2,
             targets: DEFAULT_TARGETS,
           };

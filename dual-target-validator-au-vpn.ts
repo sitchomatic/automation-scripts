@@ -20,8 +20,9 @@ import { randomUUID } from "crypto";
 const RESULTS_CSV = "results.csv";
 
 // ================== CONFIGURATION ==================
-// HARD CAP: 5 credentials concurrently × 2 sites = 10 max sessions. Do NOT change.
-const CONCURRENCY = 5;
+// Concurrency policy: default 3, absolute max 5 (× 2 sites = 10 max sessions)
+const MAX_CONCURRENCY = 5;
+const CONCURRENCY = Math.min(3, MAX_CONCURRENCY);
 const MAX_RETRIES = 2;
 
 const TARGET_SITES = [
@@ -117,14 +118,11 @@ async function createSecureSession(): Promise<Browserbase.Sessions.SessionCreate
       },
     ],
 
-    // ✅ VALID: Advanced stealth settings
+    // Proxy + session settings (non-Enterprise compatible)
     browserSettings: {
-      advancedStealth: true,
-      verified: true,
       recordSession: true,
       logSession: true,
       solveCaptchas: true,
-      os: "windows",
     },
 
     keepAlive: true,
