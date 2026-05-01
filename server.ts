@@ -54,6 +54,7 @@ engine.on("row-update", (data) => broadcast({ type: "row-update", data }));
 engine.on("log", (data) => broadcast({ type: "log", data }));
 engine.on("complete", (data) => broadcast({ type: "complete", data }));
 engine.on("stopping", () => broadcast({ type: "stopping" }));
+engine.on("screenshot", (data) => broadcast({ type: "screenshot", data }));
 
 wss.on("connection", (ws) => {
   console.log("[Server] Client connected");
