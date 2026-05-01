@@ -152,6 +152,10 @@ export class AutomationEngine extends EventEmitter {
 
     const bb = new Browserbase({ apiKey: config.apiKey });
     const limit = pLimit(concurrency);
+    let batchSlot = 0; // used to stagger session starts
+
+    // Kill any stale sessions from previous runs
+    await this.cleanupStaleSessions(bb, config.projectId);
 
     const tasks = credentials.map((cred, idx) =>
       limit(async () => {
@@ -159,6 +163,16 @@ export class AutomationEngine extends EventEmitter {
           this.rows[idx].status = "skipped";
           this.emitRowUpdate(idx);
           return;
+        }
+
+        // Stagger session creation to avoid concurrent limit bursts
+        const slot = batchSlot++;
+        if (slot > 0) {
+          const staggerMs = 2000 * (slot % concurrency);
+          if (staggerMs > 0) {
+            this.log("INFO", `  Stagger wait ${(staggerMs / 1000).toFixed(0)}s for slot ${slot}`);
+            await this.sleep(staggerMs);
+          }
         }
 
         // Mark row as running
@@ -169,22 +183,39 @@ export class AutomationEngine extends EventEmitter {
         let browser: Browser | null = null;
 
         try {
-          // Create Browserbase session with AU proxy + stealth
-          const session = await bb.sessions.create({
-            projectId: config.projectId,
-            proxies: [
-              {
-                type: "browserbase",
-                geolocation: { country: "AU", city: "Melbourne" },
-              },
-            ],
-            browserSettings: {
-              recordSession: true,
-              logSession: true,
-              solveCaptchas: true,
-            },
-            keepAlive: true,
-          });
+          // Create Browserbase session with retry (handles concurrent limit errors)
+          let session: any = null;
+          for (let attempt = 1; attempt <= 3; attempt++) {
+            try {
+              session = await bb.sessions.create({
+                projectId: config.projectId,
+                proxies: [
+                  {
+                    type: "browserbase",
+                    geolocation: { country: "AU", city: "Melbourne" },
+                  },
+                ],
+                browserSettings: {
+                  recordSession: true,
+                  logSession: true,
+                  solveCaptchas: true,
+                },
+                keepAlive: false, // session auto-closes when browser disconnects
+              });
+              break; // success
+            } catch (e: any) {
+              const msg = e.message || String(e);
+              if (attempt < 3 && (msg.includes("concurrent") || msg.includes("429") || msg.includes("limit"))) {
+                const backoff = 5000 * attempt + Math.random() * 3000;
+                this.log("WARN", `  Session create failed (attempt ${attempt}/3): ${msg.substring(0, 80)}`);
+                this.log("INFO", `  Retrying in ${(backoff / 1000).toFixed(1)}s...`);
+                await this.sleep(backoff);
+              } else {
+                throw e; // non-retryable error
+              }
+            }
+          }
+          if (!session) throw new Error("Failed to create session after 3 attempts");
 
           this.rows[idx].sessionId = session.id;
           this.rows[idx].recordingUrl = `https://www.browserbase.com/sessions/${session.id}`;
@@ -243,6 +274,9 @@ export class AutomationEngine extends EventEmitter {
 
           await browser.close();
           browser = null;
+          // Explicitly request session completion via API
+          await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => {});
+          this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
         } catch (e: any) {
           this.log("ERR", `  Session error: ${(e.message || String(e)).substring(0, 120)}`);
           // Mark remaining sites as ERROR
@@ -254,6 +288,10 @@ export class AutomationEngine extends EventEmitter {
             }
           }
           if (browser) await browser.close().catch(() => {});
+          // Also close the Browserbase session if it was created
+          if (this.rows[idx].sessionId) {
+            await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => {});
+          }
         }
 
         this.rows[idx].status = "done";
@@ -281,6 +319,33 @@ export class AutomationEngine extends EventEmitter {
 
   // ─── Private ──────────────────────────────────────────────────────────────
 
+  /** Kill all running sessions from previous runs to free up concurrent slots */
+  private async cleanupStaleSessions(bb: Browserbase, projectId: string): Promise<void> {
+    try {
+      this.log("INFO", "Cleaning up stale sessions...");
+      const sessions = await bb.sessions.list({ status: "RUNNING" });
+      const stale = [];
+      for await (const session of sessions) {
+        if (session.projectId === projectId) {
+          stale.push(session.id);
+        }
+      }
+      if (stale.length === 0) {
+        this.log("INFO", "No stale sessions found");
+        return;
+      }
+      this.log("WARN", `Found ${stale.length} stale session(s) — releasing...`);
+      for (const id of stale) {
+        await bb.sessions.update(id, { status: "REQUEST_RELEASE" }).catch(() => {});
+      }
+      // Wait for sessions to actually close
+      await this.sleep(3000);
+      this.log("INFO", `Cleaned up ${stale.length} stale session(s)`);
+    } catch (e: any) {
+      this.log("WARN", `Session cleanup failed: ${(e.message || String(e)).substring(0, 80)}`);
+    }
+  }
+
   private async executeLogin(
     page: Page,
     site: SiteConfig,
@@ -289,6 +354,10 @@ export class AutomationEngine extends EventEmitter {
     // ── Navigate ──
     await page.goto(site.url, { waitUntil: "networkidle", timeout: 30000 });
     await this.sleep(1000);
+
+    // ── Dismiss cookie notices ──
+    await this.dismissCookieNotice(page);
+
     await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
     // ── Fill email with human-like jitter ──
@@ -329,6 +398,58 @@ export class AutomationEngine extends EventEmitter {
 
     await this.captureScreenshot(page, `${site.name}:result-${isSuccess ? "success" : "failed"}`);
     return isSuccess;
+  }
+
+  /** Dismiss cookie consent banners by clicking accept/agree buttons */
+  private async dismissCookieNotice(page: Page): Promise<void> {
+    // Common selectors for cookie accept buttons across consent frameworks
+    const selectors = [
+      // Text-based: buttons containing accept/agree text
+      'button:has-text("Accept")',
+      'button:has-text("Accept All")',
+      'button:has-text("Accept all")',
+      'button:has-text("Accept Cookies")',
+      'button:has-text("Allow All")',
+      'button:has-text("Allow all")',
+      'button:has-text("Agree")',
+      'button:has-text("I Agree")',
+      'button:has-text("Got it")',
+      'button:has-text("OK")',
+      'a:has-text("Accept")',
+      'a:has-text("Accept All")',
+      // ID-based: common consent framework IDs
+      '#onetrust-accept-btn-handler',        // OneTrust
+      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', // CookieBot
+      '#cookie-accept',
+      '#accept-cookies',
+      '#acceptCookies',
+      '#gdpr-accept',
+      '.cookie-accept',
+      '.accept-cookies',
+      // Aria-based
+      '[aria-label="Accept"]',
+      '[aria-label="Accept All"]',
+      '[aria-label="Accept cookies"]',
+      // Data attribute patterns
+      '[data-action="accept"]',
+      '[data-cookie-accept]',
+      '[data-testid="cookie-accept"]',
+    ];
+
+    for (const selector of selectors) {
+      try {
+        const btn = page.locator(selector).first();
+        if (await btn.isVisible({ timeout: 500 })) {
+          await btn.click();
+          this.log("INFO", `  🍪 Dismissed cookie notice via: ${selector}`);
+          await this.sleep(500);
+          return;
+        }
+      } catch {
+        // Selector didn't match — try next
+      }
+    }
+    // No cookie banner found — continue silently
   }
 
   /** Capture a screenshot and emit it as a log event */
