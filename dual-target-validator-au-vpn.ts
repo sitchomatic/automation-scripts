@@ -56,7 +56,7 @@ interface TestResult {
   sessionId: string;
   credential: string;
   site: string;
-  outcome: "SUCCESS" | "FAILED" | "BLOCKED" | "ERROR";
+  outcome: "DONE" | "ERROR";
   attempts: number;
   recordingUrl: string;
   screenshots: string[];
@@ -156,32 +156,19 @@ async function captureScreenshot(
 async function executeLogin(
   page: any,
   site: (typeof TARGET_SITES)[0],
-  credential: Credential,
-  attempt: number
-): Promise<boolean> {
-  try {
-    await page.goto(site.url, { waitUntil: "networkidle" });
-    await sleep(jitter(1, 2));
+  credential: Credential
+): Promise<void> {
+  await page.goto(site.url, { waitUntil: "networkidle" });
+  await sleep(jitter(1, 2));
 
-    await page.fill(site.selectors.username, credential.email);
-    await sleep(jitter(0.1, 0.3));
+  await page.fill(site.selectors.username, credential.email);
+  await sleep(jitter(0.1, 0.3));
 
-    await page.fill(site.selectors.password, credential.password);
-    await sleep(jitter(0.1, 0.3));
+  await page.fill(site.selectors.password, credential.password);
+  await sleep(jitter(0.1, 0.3));
 
-    await page.click(site.selectors.submit);
-    await sleep(jitter(2, 4));
-
-    const content = await page.content();
-    const isSuccess =
-      content.includes("dashboard") ||
-      content.includes("account") ||
-      content.includes("welcome");
-
-    return isSuccess;
-  } catch (e) {
-    return false;
-  }
+  await page.click(site.selectors.submit);
+  await sleep(jitter(2, 4));
 }
 
 // ================== DUAL-TARGET VALIDATION ==================
@@ -210,52 +197,37 @@ async function validateCredential(
     const context = browser.contexts()[0];
     const page = context.pages()[0];
 
-    // Run each site SEQUENTIALLY on the same page to avoid race conditions
+    // Run each site SEQUENTIALLY on the same page
     for (const site of TARGET_SITES) {
       const screenshots: string[] = [];
-      let outcome: "SUCCESS" | "FAILED" | "BLOCKED" | "ERROR" = "ERROR";
-      let attempts = 0;
+      let outcome: "DONE" | "ERROR" = "ERROR";
 
       try {
-        for (attempts = 1; attempts <= MAX_RETRIES; attempts++) {
-          console.log(
-            `│  ${site.name} - Attempt ${attempts}/${MAX_RETRIES}`
-          );
+        console.log(`│  ${site.name} - executing login flow...`);
 
-          screenshots.push(
-            JSON.stringify(await captureScreenshot(page, `${site.name}-initial`))
-          );
+        screenshots.push(
+          JSON.stringify(await captureScreenshot(page, `${site.name}-initial`))
+        );
 
-          const success = await executeLogin(page, site, credential, attempts);
+        await executeLogin(page, site, credential);
+        outcome = "DONE";
 
-          screenshots.push(
-            JSON.stringify(await captureScreenshot(page, `${site.name}-result`))
-          );
-
-          if (success) {
-            outcome = "SUCCESS";
-            break;
-          } else {
-            outcome = "FAILED";
-          }
-
-          if (attempts < MAX_RETRIES) {
-            await sleep(2);
-          }
-        }
+        screenshots.push(
+          JSON.stringify(await captureScreenshot(page, `${site.name}-post-submit`))
+        );
       } catch (e) {
         outcome = "ERROR";
       }
 
-      const icon = outcome === "SUCCESS" ? "✅" : outcome === "FAILED" ? "❌" : "⚠️";
-      console.log(`│  ${icon} ${site.name}: ${outcome} (${attempts} attempts)`);
+      const icon = outcome === "DONE" ? "✅" : "⚠️";
+      console.log(`│  ${icon} ${site.name}: ${outcome}`);
 
       results[site.name] = {
         sessionId,
         credential: credential.email,
         site: site.name,
         outcome,
-        attempts,
+        attempts: 1,
         recordingUrl: `https://www.browserbase.com/sessions/${session.id}`,
         screenshots,
         timestamp: startTime,
@@ -344,20 +316,15 @@ async function runDualTargetValidation(credentials: Credential[]): Promise<void>
   await Promise.allSettled(tasks);
 
   // ── Final Report ──
-  const successCount = allTestResults.filter((r) => r.outcome === "SUCCESS").length;
-  const failedCount = allTestResults.filter((r) => r.outcome === "FAILED").length;
-  const blockedCount = allTestResults.filter((r) => r.outcome === "BLOCKED").length;
+  const doneCount = allTestResults.filter((r) => r.outcome === "DONE").length;
   const errorCount = allTestResults.filter((r) => r.outcome === "ERROR").length;
 
   console.log("\n══════════════════════════════════════════════════════════════");
   console.log(" FINAL REPORT");
   console.log("══════════════════════════════════════════════════════════════");
-  console.log(`   ✅ Success:  ${successCount}`);
-  console.log(`   ❌ Failed:   ${failedCount}`);
-  console.log(`   🚫 Blocked:  ${blockedCount}`);
+  console.log(`   ✅ Done:     ${doneCount}`);
   console.log(`   ⚠️  Errors:   ${errorCount}`);
   console.log(`   📊 Total:    ${allTestResults.length}`);
-  console.log(`   🎯 Rate:     ${((successCount / totalTests) * 100).toFixed(1)}%`);
   console.log(`   📄 Results:  ${path.resolve(RESULTS_CSV)}`);
   console.log("══════════════════════════════════════════════════════════════\n");
 }
