@@ -297,8 +297,8 @@ function renderTable() {
 function buildRowHTML(i) {
   const row = rows[i];
   const email = row ? row.email : (credentials[i]?.email || '—');
-  const status = row ? row.status : 'pending';
-  const cls = status === 'running' ? 'row-running' : status === 'done' ? 'row-done' : '';
+  const status = row ? row.status : 'queued';
+  const cls = status === 'testing' ? 'row-running' : status === 'done' ? 'row-done' : '';
 
   let s1 = row?.sites?.[targets[0]] || null;
   let s2 = row?.sites?.[targets[1]] || null;

@@ -295,7 +295,7 @@ export class AutomationEngine extends EventEmitter {
               this.rows[idx].sites[target.name].outcome = result;
               this.rows[idx].sites[target.name].attempts = 1; // will be updated inside executeLoginFlow
               this.log(
-                result === "DONE" ? "OK" : "WARN",
+                result === "success" ? "OK" : "WARN",
                 `  → ${target.name}: ${result}`
               );
 
@@ -312,7 +312,7 @@ export class AutomationEngine extends EventEmitter {
                 credentialDisabled = true;
                 this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
                 for (const t of targets) {
-                  if (this.rows[idx].sites[t.name].outcome === "pending" || this.rows[idx].sites[t.name].outcome === "running") {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
                     this.rows[idx].sites[t.name].outcome = "tempdisabled";
                   }
                 }
