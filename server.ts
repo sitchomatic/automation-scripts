@@ -33,6 +33,7 @@ const httpServer = createServer(app);
 const wss = new WebSocketServer({ server: httpServer });
 
 const engine = new AutomationEngine();
+let cachedCredentials: Credential[] = engine.loadCredentials(CSV_PATH);
 
 // Serve static files
 app.use(express.static(path.join(__dirname, "public")));
@@ -59,8 +60,8 @@ engine.on("screenshot", (data) => broadcast({ type: "screenshot", data }));
 wss.on("connection", (ws) => {
   console.log("[Server] Client connected");
 
-  // Send initial state
-  const credentials = engine.loadCredentials(CSV_PATH);
+  // Send initial state (use cached credentials)
+  const credentials = cachedCredentials;
   ws.send(
     JSON.stringify({
       type: "init",
@@ -103,7 +104,7 @@ wss.on("connection", (ws) => {
             return;
           }
 
-          const credentials = engine.loadCredentials(CSV_PATH);
+          const credentials = cachedCredentials;
           if (credentials.length === 0) {
             ws.send(
               JSON.stringify({ type: "error", data: { message: "No credentials found in credentials.csv" } })
@@ -136,7 +137,8 @@ wss.on("connection", (ws) => {
         }
 
         case "refresh-csv": {
-          const creds = engine.loadCredentials(CSV_PATH);
+          cachedCredentials = engine.loadCredentials(CSV_PATH);
+          const creds = cachedCredentials;
           ws.send(
             JSON.stringify({
               type: "credentials",
@@ -174,3 +176,27 @@ httpServer.listen(PORT, () => {
   console.log("╚" + "═".repeat(w) + "╝");
   console.log("");
 });
+
+// ─── Graceful Shutdown ────────────────────────────────────────────────────────
+
+function gracefulShutdown(signal: string): void {
+  console.log(`\n[Server] ${signal} received — shutting down gracefully...`);
+  if (engine.isRunning) {
+    engine.stop();
+    // Give active sessions up to 10s to finish
+    const timeout = setTimeout(() => {
+      console.log("[Server] Forced exit after 10s timeout");
+      process.exit(1);
+    }, 10000);
+    engine.once("complete", () => {
+      clearTimeout(timeout);
+      console.log("[Server] Engine drained — exiting cleanly");
+      process.exit(0);
+    });
+  } else {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
