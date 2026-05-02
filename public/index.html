@@ -163,32 +163,42 @@ let credentials = [];
 let rows = [];
 let targets = ['joe', 'ignition'];
 let isRunning = false;
+let reconnectAttempt = 0;
 
 // ─── WebSocket ───
 function connect() {
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   ws = new WebSocket(`${proto}://${location.host}`);
 
-  ws.onopen = () => addLog('INFO', 'Connected to server');
+  ws.onopen = () => {
+    reconnectAttempt = 0;
+    addLog('INFO', 'Connected to server');
+  };
 
   ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
-    switch (msg.type) {
-      case 'init': handleInit(msg.data); break;
-      case 'started': handleStarted(msg.data); break;
-      case 'row-update': handleRowUpdate(msg.data); break;
-      case 'log': handleLog(msg.data); break;
-      case 'complete': handleComplete(msg.data); break;
-      case 'stopping': addLog('WARN', 'Stopping...'); break;
-      case 'credentials': handleCredentials(msg.data); break;
-      case 'screenshot': handleScreenshot(msg.data); break;
-      case 'error': showToast(msg.data.message, 'error'); addLog('ERR', msg.data.message); break;
+    try {
+      const msg = JSON.parse(e.data);
+      switch (msg.type) {
+        case 'init': handleInit(msg.data); break;
+        case 'started': handleStarted(msg.data); break;
+        case 'row-update': handleRowUpdate(msg.data); break;
+        case 'log': handleLog(msg.data); break;
+        case 'complete': handleComplete(msg.data); break;
+        case 'stopping': addLog('WARN', 'Stopping...'); break;
+        case 'credentials': handleCredentials(msg.data); break;
+        case 'screenshot': handleScreenshot(msg.data); break;
+        case 'error': showToast(msg.data.message, 'error'); addLog('ERR', msg.data.message); break;
+      }
+    } catch (err) {
+      addLog('ERR', 'Failed to parse server message');
     }
   };
 
   ws.onclose = () => {
-    addLog('WARN', 'Disconnected — reconnecting in 3s...');
-    setTimeout(connect, 3000);
+    reconnectAttempt++;
+    const delay = Math.min(3000 * Math.pow(2, reconnectAttempt - 1), 30000);
+    addLog('WARN', `Disconnected — reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${reconnectAttempt})...`);
+    setTimeout(connect, delay);
   };
 }
 
@@ -399,7 +409,9 @@ function addLog(level, message) {
 
 function clearLog() { document.getElementById('logBody').innerHTML = ''; }
 
-function escapeHtml(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function escapeHtml(s) {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
 
 // ─── Toast ───
 function showToast(msg, type) {

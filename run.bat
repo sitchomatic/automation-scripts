@@ -1,7 +1,10 @@
 @echo off
-echo Setting environment variables...
-set BROWSERBASE_API_KEY=bb_live_l-0TlPTGcIX7Ej-1e4lOaoqBOqQ
-set BROWSERBASE_PROJECT_ID=cd060316-4ca4-49c7-881e-63b9cabd1735
+echo Loading environment from .env...
+
+REM Load variables from .env file
+for /f "usebackq eol=# tokens=1,* delims==" %%a in (".env") do (
+    set "%%a=%%b"
+)
 
 echo.
 echo Starting GUI dashboard server...

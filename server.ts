@@ -97,7 +97,7 @@ wss.on("connection", (ws) => {
             ws.send(
               JSON.stringify({
                 type: "error",
-                data: { message: "Missing BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID. Set them in run.bat." },
+                data: { message: "Missing BROWSERBASE_API_KEY or BROWSERBASE_PROJECT_ID. Set them in .env file." },
               })
             );
             return;
@@ -162,13 +162,15 @@ wss.on("connection", (ws) => {
 // ─── Start Server ─────────────────────────────────────────────────────────────
 
 httpServer.listen(PORT, () => {
+  const w = 52;
+  const pad = (s: string) => s + " ".repeat(Math.max(0, w - s.length));
   console.log("");
-  console.log("╔══════════════════════════════════════════════════════╗");
-  console.log("║       DUAL-TARGET VALIDATOR — GUI SERVER            ║");
-  console.log("╠══════════════════════════════════════════════════════╣");
-  console.log(`║  Dashboard:  http://localhost:${PORT}                  ║`);
-  console.log(`║  API Key:    ${API_KEY ? "✓ Set" : "✗ Missing"}                             ║`);
-  console.log(`║  Project:    ${PROJECT_ID ? "✓ Set" : "✗ Missing"}                             ║`);
-  console.log("╚══════════════════════════════════════════════════════╝");
+  console.log("╔" + "═".repeat(w) + "╗");
+  console.log("║" + pad("  DUAL-TARGET VALIDATOR — GUI SERVER") + "║");
+  console.log("╠" + "═".repeat(w) + "╣");
+  console.log("║" + pad(`  Dashboard:  http://localhost:${PORT}`) + "║");
+  console.log("║" + pad(`  API Key:    ${API_KEY ? "✓ Set" : "✗ Missing"}`) + "║");
+  console.log("║" + pad(`  Project:    ${PROJECT_ID ? "✓ Set" : "✗ Missing"}`) + "║");
+  console.log("╚" + "═".repeat(w) + "╝");
   console.log("");
 });
