@@ -526,8 +526,12 @@ export class AutomationEngine extends EventEmitter {
     // ── Resolve selectors (configured first, auto-detect fallback) ──
     const selectors = await this.resolveSelectors(page, site);
 
-    // ── Fill email (fast fill — no bot detection on email inputs) ──
-    await page.fill(selectors.username, cred.email);
+    // ── Fill email (human-like typing) ──
+    await page.click(selectors.username);
+    await this.sleep(100 + Math.random() * 200);
+    for (const ch of cred.email) {
+      await page.keyboard.type(ch, { delay: 30 + Math.random() * 80 });
+    }
     await this.sleep(500);
     await this.captureScreenshot(page, `${site.name}:email-filled`);
 
@@ -552,7 +556,7 @@ export class AutomationEngine extends EventEmitter {
         await page.click(selectors.password);
         await this.sleep(200 + Math.random() * 300);
         for (const ch of pw) {
-          await page.keyboard.type(ch, { delay: 20 + Math.random() * 50 });
+          await page.keyboard.type(ch, { delay: 40 + Math.random() * 100 });
         }
         await this.sleep(500);
         this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
@@ -560,8 +564,10 @@ export class AutomationEngine extends EventEmitter {
         this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
       }
 
-      // ── Press login button ──
-      await page.click(selectors.submit);
+      // ── Press login button with human hover ──
+      await page.hover(selectors.submit);
+      await this.sleep(100 + Math.random() * 200);
+      await page.click(selectors.submit, { delay: 30 + Math.random() * 50 });
 
       // ── Wait for response (5s timeout only on 3rd attempt) ──
       const timeout = attemptIdx === 2 ? 5000 : 15000;
