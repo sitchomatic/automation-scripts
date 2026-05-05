@@ -3,7 +3,7 @@
  * Express + WebSocket server that serves the dashboard frontend
  * and relays real-time automation events.
  */
-
+import "dotenv/config";
 import express from "express";
 import { createServer } from "http";
 import { WebSocketServer, WebSocket } from "ws";

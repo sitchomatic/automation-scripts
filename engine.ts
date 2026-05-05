@@ -520,6 +520,7 @@ export class AutomationEngine extends EventEmitter {
 
     // ── Dismiss cookie notices (site-specific first, then generic fallback) ──
     await this.dismissCookieNotice(page, site.name);
+    await this.sleep(500);
     await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
     // ── Resolve selectors (configured first, auto-detect fallback) ──
@@ -527,7 +528,7 @@ export class AutomationEngine extends EventEmitter {
 
     // ── Fill email (fast fill — no bot detection on email inputs) ──
     await page.fill(selectors.username, cred.email);
-    await this.sleep(300);
+    await this.sleep(500);
     await this.captureScreenshot(page, `${site.name}:email-filled`);
 
     // ── Build password sequence ──
@@ -567,6 +568,7 @@ export class AutomationEngine extends EventEmitter {
       const response = await this.waitForLoginResponse(page, timeout);
 
       // ── Screenshot after response ──
+      await this.sleep(500);
       await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
 
       // ── Handle response ──
