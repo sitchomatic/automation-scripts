@@ -17,6 +17,9 @@ import Browserbase from "@browserbasehq/sdk";
 // Browserbase's cloud-managed browser over CDP.
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { launchContext } from "cloakbrowser";
+import { getConsistentHardware, getHardwareArgs, type HardwareProfile } from "./profile-determinism.js";
+import { alignGeoToProxy, type GeoProfile } from "./profile-geo-alignment.js";
+import { buildCredentialNoiseProfile, type CredentialNoiseProfile } from "./profile-credential-noise.js";
 
 export type Backend = "cloak" | "browserbase";
 
@@ -81,6 +84,9 @@ export interface SessionHandle {
   backend: Backend;
   fingerprintSeed?: number;      // cloak only
   proxyUsed?: string;            // proxy URL actually picked for this session (cloak only)
+  hardwareProfile?: HardwareProfile;  // Phase-1: deterministic hardware preset (cloak only)
+  geoProfile?: GeoProfile;             // Phase-1: timezone/locale aligned to proxy (cloak only)
+  noiseProfile?: CredentialNoiseProfile; // Phase-1: per-credential canvas/WebGL/audio noise (cloak only)
   close: () => Promise<void>;
 }
 
@@ -93,6 +99,7 @@ export interface SessionOpts {
   headless?: boolean;            // cloak only
   timeoutSec?: number;           // browserbase session timeout
   excludeProxies?: string[];     // cloak only: proxies to skip when picking from pool (per-row retry)
+  email?: string;                // Phase-1: enables hardware/geo/noise determinism per credential (cloak only)
 }
 
 async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
@@ -102,33 +109,45 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
   const sessionId = `cloak-${crypto.randomUUID().slice(0, 8)}-${seed}`;
   const proxy = pickProxy(opts.excludeProxies || []);
 
+  // Phase-1 quality profile: deterministic per-credential when email is provided
+  const hardwareProfile = opts.email ? getConsistentHardware(opts.email) : undefined;
+  const geoProfile = opts.email ? alignGeoToProxy(proxy) : undefined;
+  const noiseProfile = opts.email ? buildCredentialNoiseProfile(opts.email) : undefined;
+  const hardwareGpuArgs = hardwareProfile ? getHardwareArgs(hardwareProfile) : ["--use-angle=d3d11"];
+
+  // Build base launch args. Hardware-derived GPU arg replaces the static d3d11 default.
+  const launchArgs = [
+    `--fingerprint=${seed}`,
+    "--fingerprint-platform=windows",      // spoof Windows — deterministic per-seed
+    "--fingerprint-platform-version=10.0.19045",  // recent Win10 build, hides headless/sandbox markers
+    // VM-detection mitigation: hide signals FP uses to flip virtual_machine: true
+    "--disable-blink-features=AutomationControlled",
+    "--use-gl=angle",                      // force ANGLE so WebGL renderer looks like real GPU
+    ...hardwareGpuArgs,                    // d3d11 (Intel) | opengl (NVIDIA) | vulkan (AMD)
+    "--enable-features=Vulkan",            // advertise Vulkan support (hardware hosts have it)
+    "--disable-features=IsolateOrigins,site-per-process,UserAgentClientHint",
+    "--enable-accelerated-2d-canvas",
+    "--enable-accelerated-video-decode",
+    "--ignore-gpu-blocklist",
+    "--disable-popup-blocking",
+    "--disable-background-networking",
+    "--metrics-recording-only",
+  ];
+
   const context = await launchContext({
     headless: opts.headless ?? true,
     proxy,
     geoip: !!proxy,                          // auto TZ/locale/WebRTC IP from proxy exit
     humanize: true,                          // human mouse curves + keystroke timing
     viewport,
-    args: [
-      `--fingerprint=${seed}`,
-      "--fingerprint-platform=windows",      // spoof Windows — deterministic per-seed
-      "--fingerprint-platform-version=10.0.19045",  // recent Win10 build, hides headless/sandbox markers
-      // VM-detection mitigation: hide signals FP uses to flip virtual_machine: true
-      "--disable-blink-features=AutomationControlled",
-      "--use-gl=angle",                      // force ANGLE so WebGL renderer looks like real GPU
-      "--use-angle=d3d11",                   // D3D11 backend → matches a real Windows host
-      "--enable-features=Vulkan",            // advertise Vulkan support (hardware hosts have it)
-      "--disable-features=IsolateOrigins,site-per-process,UserAgentClientHint",
-      "--enable-accelerated-2d-canvas",
-      "--enable-accelerated-video-decode",
-      "--ignore-gpu-blocklist",
-      "--disable-popup-blocking",
-      "--disable-background-networking",
-      "--metrics-recording-only",
-    ],
+    // Phase-1: explicit timezone/locale aligned to proxy exit IP. cloakbrowser
+    // uses these alongside geoip to keep Intl/Date/WebRTC consistent.
+    ...(geoProfile ? { timezone: geoProfile.timezone, locale: geoProfile.locale } : {}),
+    args: launchArgs,
     launchOptions: { slowMo },
   });
 
-  const page = context.pages()[0] || (await context.newPage());
+  const page = context.pages()[0] ?? (await context.newPage());
 
   return {
     context,
@@ -138,6 +157,9 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     backend: "cloak",
     fingerprintSeed: seed,
     proxyUsed: proxy,
+    hardwareProfile,
+    geoProfile,
+    noiseProfile,
     close: async () => {
       await context.close().catch(() => { });
     },
@@ -175,8 +197,8 @@ async function createBrowserbaseSession(opts: SessionOpts): Promise<SessionHandl
   if (!session) throw new Error("Failed to create Browserbase session after 3 attempts");
 
   const browser = await chromium.connectOverCDP(session.connectUrl, { slowMo });
-  const context = browser.contexts()[0];
-  const page = context.pages()[0];
+  const context = browser.contexts()[0] ?? (await browser.newContext());
+  const page = context.pages()[0] ?? (await context.newPage());
 
   return {
     context,

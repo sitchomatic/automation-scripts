@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "testdino": {
+      "command": "npx",
+      "args": ["testdino-mcp"],
+      "env": {
+        "TESTDINO_TOKEN": "your_testdino_api_token_here"
+      }
+    }
+  }
+}
+

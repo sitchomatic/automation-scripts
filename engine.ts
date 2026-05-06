@@ -13,8 +13,13 @@ import { type Page } from "playwright-core";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
-import { applyStealth } from "./stealth";
-import { createSession, BACKEND, PROXY_INFO, getProxyPoolSize, type SessionHandle } from "./cloak-backend";
+import { applyStealth } from "./stealth.js";
+import { createSession, BACKEND, PROXY_INFO, getProxyPoolSize, type SessionHandle } from "./cloak-backend.js";
+import { profilePool } from "./manager-pool.js";
+import { healthMonitor } from "./manager-health.js";
+import { metricsCollector, type ManagerMetrics } from "./manager-metrics.js";
+import { getManagerConfig } from "./manager-config.js";
+import { gracefulShutdown, registerShutdownHandlers } from "./manager-shutdown.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -316,6 +321,32 @@ export class AutomationEngine extends EventEmitter {
       : null;
     if (BACKEND === "cloak") {
       this.log("INFO", `Backend: cloak (local CloakBrowser) | proxy: ${PROXY_INFO}`);
+
+      // Initialize manager integrations (pooling, health checks, metrics, shutdown)
+      try {
+        const managerCfg = getManagerConfig();
+        this.log("INFO", `CloakBrowser Manager: ${managerCfg.url}`);
+
+        if (managerCfg.enableHealthMonitor) {
+          healthMonitor.start();
+          healthMonitor.on("profile-unhealthy", (evt) => {
+            this.log("WARN", `⚠ Profile ${evt.profileId} unhealthy — auto-recovery recommended`);
+          });
+          this.log("INFO", "Manager health monitor started");
+        }
+
+        if (managerCfg.enableMetrics) {
+          metricsCollector.on("connection-recorded", (evt) => {
+            metricsCollector.recordConnection(evt.timeMs, evt.healthy);
+          });
+          this.log("INFO", "Manager metrics collection enabled");
+        }
+
+        registerShutdownHandlers();
+        this.log("INFO", "Graceful shutdown handlers registered");
+      } catch (err: any) {
+        this.log("WARN", `Manager integration setup failed: ${err.message}`);
+      }
     }
 
     // Dynamic concurrency limiter — starts at 1, ramps up after WARMUP_ROWS if success rate holds
@@ -427,6 +458,7 @@ export class AutomationEngine extends EventEmitter {
               slowMo: 100,
               fingerprintSeed: seed,
               excludeProxies: triedProxies,
+              email: BACKEND === "cloak" ? cred.email : undefined,
             });
             if (handle.proxyUsed) triedProxies.push(handle.proxyUsed);
 
@@ -434,6 +466,14 @@ export class AutomationEngine extends EventEmitter {
             this.rows[idx].recordingUrl = handle.recordingUrl;
             const seedTag = handle.fingerprintSeed != null ? ` seed=${handle.fingerprintSeed}` : "";
             this.log("INFO", `  Session: ${handle.sessionId}${seedTag}`);
+            if (handle.hardwareProfile) {
+              const hp = handle.hardwareProfile;
+              this.log("INFO", `  Hardware: ${hp.cores}c / ${hp.memory}GB / ${hp.gpu.vendor} ${hp.gpu.renderer}`);
+            }
+            if (handle.geoProfile) {
+              const gp = handle.geoProfile;
+              this.log("INFO", `  Geo: ${gp.countryCode} (${gp.timezone} / ${gp.locale})`);
+            }
 
             const page: Page = handle.page;
             page.setDefaultTimeout(30000);
@@ -573,6 +613,23 @@ export class AutomationEngine extends EventEmitter {
 
     // Final complete CSV (overwrite incremental with clean version)
     this.writeResultsCSV(targets);
+
+    // Graceful shutdown: drain pool, stop health monitor, cleanup profiles
+    if (BACKEND === "cloak") {
+      try {
+        const shutdownResult = await gracefulShutdown(30_000);
+        this.log("INFO", `Graceful shutdown: ${shutdownResult.message}`);
+
+        // Emit final metrics
+        if (metricsCollector) {
+          const metrics = metricsCollector.collect();
+          this.log("INFO", `Final metrics: ${metrics.profilesRunning}/${metrics.profilesTotal} profiles, ${metrics.failureRate.toFixed(2)}% failure rate`);
+          this.emit("metrics", metrics);
+        }
+      } catch (err: any) {
+        this.log("WARN", `Shutdown error: ${err.message}`);
+      }
+    }
 
     this.running = false;
     this.emit("complete", { rows: this.rows });

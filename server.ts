@@ -42,7 +42,7 @@ app.use(express.static(path.join(__dirname, "public")));
 
 function broadcast(data: object): void {
   const msg = JSON.stringify(data);
-  wss.clients.forEach((client) => {
+  wss.clients.forEach((client: any) => {
     if (client.readyState === WebSocket.OPEN) {
       client.send(msg);
     }
@@ -57,7 +57,7 @@ engine.on("complete", (data) => broadcast({ type: "complete", data }));
 engine.on("stopping", () => broadcast({ type: "stopping" }));
 engine.on("screenshot", (data) => broadcast({ type: "screenshot", data }));
 
-wss.on("connection", (ws) => {
+wss.on("connection", (ws: any) => {
   console.log("[Server] Client connected");
 
   // Send initial state (use cached credentials)
@@ -83,7 +83,7 @@ wss.on("connection", (ws) => {
   );
 
   // Handle messages from client
-  ws.on("message", async (raw) => {
+  ws.on("message", async (raw: any) => {
     try {
       const msg = JSON.parse(raw.toString());
 

@@ -9,8 +9,8 @@
  *   npx tsx validate-targets.ts foo@x.com bar@y.com
  */
 import "dotenv/config";
-import { AutomationEngine, DEFAULT_TARGETS, type EngineConfig, type Credential } from "./engine";
-import { BACKEND } from "./cloak-backend";
+import { AutomationEngine, DEFAULT_TARGETS, type EngineConfig, type Credential } from "./engine.js";
+import { BACKEND } from "./cloak-backend.js";
 
 const DEFAULT_CSV_PATH = "credentials.csv";
 

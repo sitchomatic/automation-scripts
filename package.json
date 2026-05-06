@@ -26,6 +26,8 @@
     "ws": "^8.20.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/ws": "^8.18.1",
     "tsx": "^4.7.0"
   }
 }

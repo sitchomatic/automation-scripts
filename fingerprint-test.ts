@@ -15,8 +15,8 @@ import Browserbase from "@browserbasehq/sdk";
 import { type Page } from "playwright-core";
 import * as fs from "fs";
 import * as path from "path";
-import { applyStealth } from "./stealth";
-import { createSession, BACKEND, PROXY_INFO } from "./cloak-backend";
+import { applyStealth } from "./stealth.js";
+import { createSession, BACKEND, PROXY_INFO } from "./cloak-backend.js";
 
 const API_KEY = (process.env.BROWSERBASE_API_KEY || "").trim();
 const PROJECT_ID = (process.env.BROWSERBASE_PROJECT_ID || "").trim();
