@@ -111,30 +111,33 @@ The 4th attempt in both paths is a deliberate re-press of the 3rd password, serv
 
 ### Phase 5: Per-Site Login Flow (sequential: joe → ignition)
 
-25. Navigate to login URL (`waitUntil: "networkidle"`, 30s timeout)
-26. Wait 1s for render
-27. Dismiss cookie banner (site-specific selectors first → 24 generic fallbacks)
-28. Screenshot: `{site}:page-loaded`
-29. Resolve selectors: try `#username`, `#password`, `#loginSubmit` first (2s)
+25. Navigate to login URL (`waitUntil: "domcontentloaded"`, 30s timeout). Using `domcontentloaded` instead of `networkidle` prevents infinite WebSocket hangs.
+26. Dismiss cookie banner (site-specific selectors first → 24 generic fallbacks). Dumb buffers have been completely removed.
+27. Screenshot: `{site}:page-loaded`
+28. Resolve selectors: try `#username`, `#password`, `#loginSubmit` first (2s)
     - If missing → auto-detect via `input[type=email]`, `input[type=password]`, `button[type=submit]`, etc.
-30. Fill email (ultra fast human-like: 20-70ms per character)
+29. Perform randomized human behavioral emulation (fractional 33ms-166ms pauses for mouse jiggling and wheel scrolling).
+30. Fill email (ultra fast human-like: 20-70ms per character).
 31. Screenshot: `{site}:email-filled`
 
 ### Phase 6: Password Retry Loop (4 attempts per site)
 
 32. Build password sequence (Path A or Path B, see above)
-33. For each attempt 1-4:
+33. **Visual Baseline Capture:** Dynamically capture the exact computed CSS `background-color` and `opacity` of the "ready" submit button before any interactions.
+34. For each attempt 1-4:
+    - **Reactive UI-Reset Gate (Attempts 2-4):** Actively poll the DOM and refuse to proceed until the submit button's computed CSS completely reverts to the unpressed baseline captured in Attempt 1.
     - Attempts 1-3: Clear + type password (ultra fast human-like)
     - Attempt 4: Re-press login button only (same password as #3)
-    - Click submit
-    - Wait for response: `networkidle` + 500ms (5s timeout on attempt 3, 15s otherwise)
+    - Hover submit button, then click (click duration 10-26ms)
+    - **Wait for response (Fast-Poll Race):** Wait a 250ms pre-race buffer, then race for up to 3000ms (polling the network and a Shadow-DOM `MutationObserver` every 50ms) to catch `success`, `incorrect`, or `disabled` instantly.
+    - **Vanished Form Check:** If the login form vanishes entirely between clicks (late-loading success without URL redirect), intercept the "Element not found" error and treat it as a success.
     - Screenshot: `{site}:attempt-{N}-{response}`
     - Check page content:
       - `"been disabled"` → **permdisabled** (throw, propagate to all sites)
       - `"temporarily disabled"` → **tempdisabled** (throw, set 1hr cooldown)
       - `"incorrect"` → try next password
       - none of above → **success** (return immediately)
-34. After 4th attempt with no success/disable → **noaccount**
+35. After 4th attempt with no success/disable → **noaccount**
 
 ### Phase 7: Cross-Site Propagation
 

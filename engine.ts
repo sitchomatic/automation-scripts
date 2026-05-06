@@ -1031,9 +1031,20 @@ export class AutomationEngine extends EventEmitter {
     const hasAltPw = cred.passwords.length > 1;
     this.log("INFO", `  ${site.name}: batch ${batchIndex} · ${hasAltPw ? "multi-password" : "single + fallbacks"} \u2014 ${passwords.length} attempts`);
 
+    // ── Capture submit-button idle visual baseline (computed BEFORE any
+    // hover/focus interaction) so the inter-attempt reset wait below has a
+    // true unpressed reference. Works for Joe Fortune (yellow → faded) and
+    // Ignition (orange → faded coral) without per-site colour constants:
+    // we match the page's own computed values rather than hard-coded RGB.
+    const submitReadyState: { bg: string, op: string } | null = await page.evaluate((sel) => {
+      const el = document.querySelector(sel);
+      if (!el) return null;
+      const style = window.getComputedStyle(el);
+      return { bg: style.backgroundColor, op: style.opacity };
+    }, selectors.submit).catch(() => null);
+
     // ── Password retry loop ──
     let lastResponse: LoginResponse | null = null;
-    let submitReadyState: { bg: string, op: string } | null = null;
     for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
       const pw = passwords[attemptIdx];
       const attemptNum = attemptIdx + 1;
@@ -1060,6 +1071,26 @@ export class AutomationEngine extends EventEmitter {
         } catch { /* page closed — fall through to normal handling */ }
       }
 
+      // ── Reactive UI-reset gate: before re-pressing, wait for the submit
+      // button to transition out of its "pressed/loading" state (faded /
+      // greyed / disabled) and back to the captured idle baseline. Replaces
+      // any hardcoded inter-attempt sleep — gate is 100% DOM-driven.
+      // If the form vanished entirely → unblock immediately (the click
+      // below will throw and the vanished-form catch handles it as success).
+      if (attemptIdx > 0 && submitReadyState) {
+        try {
+          await page.waitForFunction((args: { sel: string, orig: { bg: string, op: string } }) => {
+            const el = document.querySelector(args.sel);
+            if (!el) return true; // form vanished — proceed
+            if ((el as HTMLButtonElement).disabled) return false;
+            const style = window.getComputedStyle(el);
+            return style.backgroundColor === args.orig.bg && style.opacity === args.orig.op;
+          }, { sel: selectors.submit, orig: submitReadyState }, { timeout: 8000, polling: 50 });
+        } catch {
+          this.log("WARN", `  ${site.name}: timed out waiting for submit button to return to ready colour`);
+        }
+      }
+
       // ── Fill + submit, with vanished-form detection ──
       // If the form disappears mid-attempt (Joe Fortune late-redirect pattern),
       // page.fill/hover/click will throw "Element not found". When that happens
@@ -1082,28 +1113,6 @@ export class AutomationEngine extends EventEmitter {
 
         await page.hover(selectors.submit);
         await this.pace(33 + Math.random() * 66);
-
-        if (attemptIdx === 0) {
-          submitReadyState = await page.evaluate((sel) => {
-            const el = document.querySelector(sel);
-            if (!el) return null;
-            const style = window.getComputedStyle(el);
-            return { bg: style.backgroundColor, op: style.opacity };
-          }, selectors.submit).catch(() => null);
-        } else if (submitReadyState) {
-          try {
-            await page.waitForFunction((args: any) => {
-              const el = document.querySelector(args.sel);
-              if (!el) return true; // Form vanished, safe to proceed
-              if ((el as HTMLButtonElement).disabled) return false;
-              const style = window.getComputedStyle(el);
-              return style.backgroundColor === args.orig.bg && style.opacity === args.orig.op;
-            }, { sel: selectors.submit, orig: submitReadyState }, { timeout: 8000, polling: 50 });
-          } catch {
-             this.log("WARN", `  ${site.name}: timed out waiting for submit button to return to ready color`);
-          }
-        }
-
         await page.click(selectors.submit, { delay: this.speedMode === "fast" ? 0 : 10 + Math.random() * 16 });
       } catch (interactErr: any) {
         const msg = interactErr?.message || String(interactErr);
@@ -1158,8 +1167,8 @@ export class AutomationEngine extends EventEmitter {
         page, timeout, site.url, selectors.submit, selectors.password,
       );
 
-      // ── Screenshot after response ──
-      await this.pace(500);
+      // ── Screenshot after response (no inter-attempt sleep — the next
+      // iteration's reactive submit-reset gate handles UI settling). ──
       await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
 
       // ── Handle response ──
