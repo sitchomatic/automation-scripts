@@ -12,6 +12,9 @@ import "dotenv/config";
 import * as crypto from "crypto";
 import * as fs from "fs";
 import Browserbase from "@browserbasehq/sdk";
+// playwright-core: shared BrowserContext/Page types (what cloakbrowser's
+// launchContext() returns) and the chromium client used to connect to
+// Browserbase's cloud-managed browser over CDP.
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { launchContext } from "cloakbrowser";
 
@@ -118,6 +121,9 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
       "--enable-accelerated-2d-canvas",
       "--enable-accelerated-video-decode",
       "--ignore-gpu-blocklist",
+      "--disable-popup-blocking",
+      "--disable-background-networking",
+      "--metrics-recording-only",
     ],
     launchOptions: { slowMo },
   });
