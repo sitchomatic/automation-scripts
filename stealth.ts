@@ -493,15 +493,14 @@ function buildSpoofBody(): string {
     }
   }
 
-  // 7. Function.prototype.toString — mask EVERY patched function as native code.
-  //    This is the single biggest tampering_ml_score signal: real Chrome natives
-  //    return "function name() { [native code] }".
-  const origFnToString = Function.prototype.toString;
-  Function.prototype.toString = function () {
-    if (PATCHED.has(this)) return 'function ' + (this.name || '') + '() { [native code] }';
-    return origFnToString.call(this);
-  };
-  PATCHED.add(Function.prototype.toString);
+  // 7. Function.prototype.toString — INTENTIONALLY NOT PATCHED for browserbase.
+  //    Patching toString itself is the dominant anti_detect_browser ML signal:
+  //    Function.prototype.toString.toString() would no longer return native
+  //    code, and FP fingerprints the toString of toString. We accept that
+  //    individual patched accessors return their JS source instead of
+  //    [native code] — a smaller, less-weighted tell — in exchange for
+  //    keeping Function.prototype.toString itself genuinely native.
+  //    PATCHED / mark() are kept as no-ops to avoid touching every callsite.
 
   if (isWorker) return; // Below is main-frame-only
 

@@ -1004,7 +1004,6 @@ export class AutomationEngine extends EventEmitter {
     } catch {
       await this.dismissCookieNotice(page, site.name);
     }
-    await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
     // ── Resolve selectors (configured first, auto-detect fallback) ──
     const selectors = await this.resolveSelectors(page, site);
@@ -1020,7 +1019,6 @@ export class AutomationEngine extends EventEmitter {
     // ── Fill email (mode-aware: autofill default, keyboard if toggled) ──
     await this.inputText(page, selectors.username, cred.email);
     await this.pace(166);
-    await this.captureScreenshot(page, `${site.name}:email-filled`);
 
     // ── Build password sequence ──
     const passwords = this.buildPasswordSequence(cred.passwords, batchIndex);
@@ -1075,6 +1073,9 @@ export class AutomationEngine extends EventEmitter {
       // button to transition out of its "pressed/loading" state (faded /
       // greyed / disabled) and back to the captured idle baseline. Replaces
       // any hardcoded inter-attempt sleep — gate is 100% DOM-driven.
+      // After the gate releases, hold a 700ms buffer and capture the prior
+      // attempt's outcome twice (at +200ms and +700ms) — these are the only
+      // screenshots taken between submits.
       // If the form vanished entirely → unblock immediately (the click
       // below will throw and the vanished-form catch handles it as success).
       if (attemptIdx > 0 && submitReadyState) {
@@ -1089,6 +1090,14 @@ export class AutomationEngine extends EventEmitter {
         } catch {
           this.log("WARN", `  ${site.name}: timed out waiting for submit button to return to ready colour`);
         }
+        // 700ms post-ready buffer with two captures inside it. The labels
+        // reference the previous attempt (attemptIdx == prior 1-based num).
+        const prevAttemptNum = attemptIdx;
+        const prevResp = lastResponse ?? "unknown";
+        await this.sleep(200);
+        await this.captureScreenshot(page, `${site.name}:attempt-${prevAttemptNum}-${prevResp}-200ms`);
+        await this.sleep(500);
+        await this.captureScreenshot(page, `${site.name}:attempt-${prevAttemptNum}-${prevResp}-700ms`);
       }
 
       // ── Fill + submit, with vanished-form detection ──
@@ -1167,21 +1176,24 @@ export class AutomationEngine extends EventEmitter {
         page, timeout, site.url, selectors.submit, selectors.password,
       );
 
-      // ── Screenshot after response (no inter-attempt sleep — the next
-      // iteration's reactive submit-reset gate handles UI settling). ──
-      await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
-
-      // ── Handle response ──
+      // ── Handle response. Terminal outcomes (success / disabled /
+      // tempdisabled) get an additional screenshot here since the loop
+      // exits before the next iteration's post-ready captures would fire.
+      // Non-terminal outcomes (incorrect / timeout / other) are captured
+      // by the next iteration's 200ms + 700ms post-ready window. ──
       if (response === "success") {
+        await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-success`);
         this.log("INFO", `  ${site.name}: ✅ login success on attempt ${attemptNum}`);
         return { outcome: "success", attempts: attemptNum };
       }
 
       if (response === "disabled") {
+        await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-disabled`);
         throw new PermDisabledError();
       }
 
       if (response === "tempdisabled") {
+        await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-tempdisabled`);
         throw new TempDisabledError();
       }
 

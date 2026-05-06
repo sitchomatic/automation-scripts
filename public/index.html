@@ -629,6 +629,18 @@
       background: var(--border-h);
       border-radius: 3px
     }
+
+    /* Form & Control Utility Classes */
+    .control-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .control-label { font-size: 12px; color: var(--text2); font-family: 'JetBrains Mono', monospace; }
+    .control-label.ml { margin-left: 6px; }
+    .control-input { padding: 4px 6px; font-size: 13px; font-family: 'JetBrains Mono', monospace; background: var(--surface-1, #1a1f2e); color: var(--text); border: 1px solid var(--border, #2a3142); border-radius: 4px; }
+    .control-input.center { text-align: center; }
+    .control-input.w52 { width: 52px; }
+    .control-hint { font-size: 11px; color: var(--text2); font-family: 'JetBrains Mono', monospace; }
+    .table-responsive { overflow-x: auto; }
+    .th-select-all { width: 40px; }
+    .btn-clear-log { padding: 4px 10px; font-size: 11px; }
   </style>
 </head>
 
@@ -682,28 +694,21 @@
       <button class="btn btn-stop" id="btnStop" onclick="stopAutomation()" disabled>⏹ Stop</button>
       <button class="btn btn-secondary" onclick="removeSelected()">🗑 Remove Selected</button>
       <button class="btn btn-secondary" onclick="refreshCSV()">↻ Reload CSV</button>
-      <div class="concurrency-control" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <label for="concurrencyInput"
-          style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace">concurrency</label>
-        <input id="concurrencyInput" type="number" min="1" max="5" step="1" value="1"
-          onchange="setConcurrency(this.value)"
-          style="width:52px;padding:4px 6px;font-size:13px;font-family:'JetBrains Mono',monospace;background:var(--surface-1,#1a1f2e);color:var(--text);border:1px solid var(--border,#2a3142);border-radius:4px;text-align:center" />
-        <label for="inputModeSelect"
-          style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-left:6px">input</label>
-        <select id="inputModeSelect" onchange="setInputMode(this.value)"
-          style="padding:4px 6px;font-size:13px;font-family:'JetBrains Mono',monospace;background:var(--surface-1,#1a1f2e);color:var(--text);border:1px solid var(--border,#2a3142);border-radius:4px">
+      <div class="concurrency-control control-group">
+        <label for="concurrencyInput" class="control-label">concurrency</label>
+        <input id="concurrencyInput" class="control-input w52 center" type="number" min="1" max="5" step="1" value="1"
+          onchange="setConcurrency(this.value)" />
+        <label for="inputModeSelect" class="control-label ml">input</label>
+        <select id="inputModeSelect" class="control-input" onchange="setInputMode(this.value)">
           <option value="autofill">autofill</option>
           <option value="keyboard">keyboard</option>
         </select>
-        <label for="speedModeSelect"
-          style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-left:6px">speed</label>
-        <select id="speedModeSelect" onchange="setSpeedMode(this.value)"
-          style="padding:4px 6px;font-size:13px;font-family:'JetBrains Mono',monospace;background:var(--surface-1,#1a1f2e);color:var(--text);border:1px solid var(--border,#2a3142);border-radius:4px">
+        <label for="speedModeSelect" class="control-label ml">speed</label>
+        <select id="speedModeSelect" class="control-input" onchange="setSpeedMode(this.value)">
           <option value="fast">fast</option>
           <option value="normal">normal</option>
         </select>
-        <span id="concurrencyHint" style="font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace">live
-          · headed</span>
+        <span id="concurrencyHint" class="control-hint">live · headed</span>
       </div>
     </div>
 
@@ -719,11 +724,11 @@
     <div class="content">
       <div class="table-wrap">
         <div class="table-header">📋 Credential Queue</div>
-        <div style="overflow-x:auto">
+        <div class="table-responsive">
           <table>
             <thead>
               <tr>
-                <th style="width: 40px"><input type="checkbox" id="selectAll" checked
+                <th class="th-select-all"><input type="checkbox" id="selectAll" checked title="Select all rows" aria-label="Select all rows"
                     onchange="toggleAll(this.checked)"></th>
                 <th>#</th>
                 <th>Email</th>
@@ -738,8 +743,7 @@
         </div>
       </div>
       <div class="log-panel">
-        <div class="log-header"><span>📡 Live Log</span><button class="btn btn-secondary"
-            style="padding:4px 10px;font-size:11px" onclick="clearLog()">Clear</button></div>
+        <div class="log-header"><span>📡 Live Log</span><button class="btn btn-secondary btn-clear-log" onclick="clearLog()">Clear</button></div>
         <div class="log-body" id="logBody"></div>
       </div>
     </div>

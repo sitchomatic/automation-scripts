@@ -1,15 +1,15 @@
 [
   {
     "sessionIdx": 1,
-    "sessionId": "cloak-f3a66339-72486",
-    "recordingUrl": "",
+    "sessionId": "8ef2915a-5d45-4b26-8a3d-850c4b9d0fc4",
+    "recordingUrl": "https://www.browserbase.com/sessions/8ef2915a-5d45-4b26-8a3d-850c4b9d0fc4",
     "rawJsonHits": [
       {
-        "url": "https://demo.fingerprint.com/api/event/v4/1778024359765.tajxuK",
+        "url": "https://demo.fingerprint.com/api/event/v4/1778064613284.s0DutU",
         "body": {
-          "event_id": "1778024359765.tajxuK",
-          "timestamp": 1778024359789,
-          "linked_id": "session_id_62039300",
+          "event_id": "1778064613284.s0DutU",
+          "timestamp": 1778064613293,
+          "linked_id": "session_id_d4110e92",
           "environment_id": "ae_83d51ca3dcde8777",
           "sdk": {
             "platform": "js",
@@ -27,26 +27,28 @@
           },
           "replayed": false,
           "identification": {
-            "visitor_id": "q5rg10ND9i79Ir1QReRT",
+            "visitor_id": "0CF0GpNrlAWaUgAQNfYu",
             "confidence": {
-              "score": 1,
+              "score": 0.9,
               "version": "v1.1"
             },
-            "visitor_found": false,
-            "first_seen_at": 1778024359789
+            "visitor_found": true,
+            "first_seen_at": 1778017150912,
+            "last_seen_at": 1778064066045
           },
           "url": "https://demo.fingerprint.com/playground",
-          "ip_address": "119.18.2.238",
-          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
+          "ip_address": "115.69.27.215",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
           "browser_details": {
             "browser_name": "Chrome",
-            "browser_major_version": "146",
-            "browser_full_version": "146.0.0",
+            "browser_major_version": "125",
+            "browser_full_version": "125.0.0",
             "os": "Windows",
             "os_version": "11",
             "device": "Other"
           },
-          "bot": "not_detected",
+          "bot": "bad",
+          "bot_type": "browser_automation_studio",
           "developer_tools": false,
           "ip_blocklist": {
             "email_spam": false,
@@ -55,384 +57,7 @@
           },
           "ip_info": {
             "v4": {
-              "address": "119.18.2.238",
-              "geolocation": {
-                "accuracy_radius": 20,
-                "latitude": -33.86785,
-                "longitude": 151.20732,
-                "postal_code": "1001",
-                "timezone": "Australia/Sydney",
-                "city_name": "Sydney",
-                "country_code": "AU",
-                "country_name": "Australia",
-                "continent_code": "OC",
-                "continent_name": "Oceania",
-                "subdivisions": [
-                  {
-                    "iso_code": "NSW",
-                    "name": "New South Wales"
-                  }
-                ]
-              },
-              "asn": "4764",
-              "asn_name": "Aussie Broadband",
-              "asn_network": "119.18.0.0/19",
-              "asn_type": "isp",
-              "datacenter_result": false
-            }
-          },
-          "proxy": true,
-          "proxy_confidence": "high",
-          "proxy_details": {
-            "proxy_type": "residential",
-            "last_seen_at": 1777766400000,
-            "provider": "711Proxy"
-          },
-          "incognito": true,
-          "privacy_settings": false,
-          "suspect_score": 28,
-          "tampering": false,
-          "tampering_confidence": "high",
-          "tampering_ml_score": 0.1475,
-          "tampering_details": {
-            "anomaly_score": 0,
-            "anti_detect_browser": false
-          },
-          "velocity": {
-            "distinct_ip": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_linked_id": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_country": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "events": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "ip_events": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_ip_by_linked_id": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_visitor_id_by_linked_id": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            }
-          },
-          "virtual_machine": true,
-          "virtual_machine_ml_score": 0.292,
-          "vpn": false,
-          "vpn_confidence": "medium",
-          "vpn_origin_timezone": "Australia/Sydney",
-          "vpn_methods": {
-            "timezone_mismatch": false,
-            "public_vpn": false,
-            "auxiliary_mobile": false,
-            "os_mismatch": false,
-            "relay": false
-          },
-          "high_activity_device": false,
-          "raw_device_attributes": {
-            "font_preferences": {
-              "default": 149.3125,
-              "serif": 149.3125,
-              "sans": 144.015625,
-              "mono": 132.625,
-              "apple": 149.3125,
-              "min": 9.34375,
-              "system": 147.859375
-            },
-            "emoji": {
-              "font": "\"Times New Roman\"",
-              "width": 1757.5,
-              "height": 17,
-              "top": 10.96875,
-              "bottom": 27.96875,
-              "left": 7.953125,
-              "right": 1765.453125,
-              "x": 7.953125,
-              "y": 10.96875
-            },
-            "fonts": [
-              "Agency FB",
-              "Calibri",
-              "Century",
-              "Century Gothic",
-              "Franklin Gothic",
-              "Haettenschweiler",
-              "Helvetica Neue",
-              "Leelawadee",
-              "Lucida Bright",
-              "Lucida Sans",
-              "MS Outlook",
-              "MS Reference Specialty",
-              "MS UI Gothic",
-              "MT Extra",
-              "Marlett",
-              "Microsoft Uighur",
-              "Monotype Corsiva",
-              "Pristina",
-              "Segoe UI Light"
-            ],
-            "device_memory": 8,
-            "timezone": "Australia/Sydney",
-            "canvas": {
-              "winding": true,
-              "geometry": "90fc0dc51e00e8c2f935d0fb0879fe28",
-              "text": "b095b54e1367c4991181ba0e8d77a8f6"
-            },
-            "languages": [
-              [
-                "en-AU"
-              ]
-            ],
-            "webgl_extensions": {
-              "context_attributes": "6b1ed336830d2bc96442a9d76373252a",
-              "parameters": "0c46a373e74bab31361d77e13ec1511a",
-              "shader_precisions": "f223dfbcd580cf142da156d93790eb83",
-              "extensions": "1bebf3c88a5c43d35e87fc39e42cae23",
-              "extension_parameters": "dd1b201e03b7335375e71e4dfe781078",
-              "unsupported_extensions": []
-            },
-            "webgl_basics": {
-              "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
-              "vendor": "WebKit",
-              "vendor_unmasked": "Google Inc. (NVIDIA)",
-              "renderer": "WebKit WebGL",
-              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 Ti SUPER (0x00002705) Direct3D11 vs_5_0 ps_5_0, D3D11)",
-              "shading_language_version": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
-            },
-            "screen_resolution": [
-              1920,
-              1080
-            ],
-            "touch_support": {
-              "touch_event": false,
-              "touch_start": false,
-              "max_touch_points": 10
-            },
-            "architecture": 255,
-            "cookies_enabled": true,
-            "hardware_concurrency": 8,
-            "date_time_locale": "en-AU",
-            "vendor": "Google Inc.",
-            "color_depth": 32,
-            "platform": "Win32",
-            "session_storage": true,
-            "local_storage": true,
-            "audio": 124.0433372290936,
-            "plugins": [
-              {
-                "name": "PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Chrome PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Chromium PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Microsoft Edge PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "WebKit built-in PDF",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              }
-            ],
-            "indexed_db": true,
-            "math": "5f030fa7d2e5f9f757bfaf81642eb1a6",
-            "font_hash": "ad168398d2cd00c273f9fd7c0543a7e6",
-            "timezone_offset": "+10:00"
-          }
-        }
-      }
-    ],
-    "pageText": "",
-    "visitorId": "q5rg10ND9i79Ir1QReRT",
-    "bot": "not_detected",
-    "smartSignals": {
-      "suspect_score": 28,
-      "tampering": false,
-      "tampering_ml_score": 0.1475,
-      "tampering_details": {
-        "anomaly_score": 0,
-        "anti_detect_browser": false
-      },
-      "virtual_machine": true,
-      "virtual_machine_ml_score": 0.292,
-      "vpn": false,
-      "vpn_confidence": "medium",
-      "vpn_methods": {
-        "timezone_mismatch": false,
-        "public_vpn": false,
-        "auxiliary_mobile": false,
-        "os_mismatch": false,
-        "relay": false
-      },
-      "incognito": true,
-      "proxy": true,
-      "proxy_details": {
-        "proxy_type": "residential",
-        "last_seen_at": 1777766400000,
-        "provider": "711Proxy"
-      },
-      "ip_address": "119.18.2.238",
-      "ip_geolocation": {
-        "accuracy_radius": 20,
-        "latitude": -33.86785,
-        "longitude": 151.20732,
-        "postal_code": "1001",
-        "timezone": "Australia/Sydney",
-        "city_name": "Sydney",
-        "country_code": "AU",
-        "country_name": "Australia",
-        "continent_code": "OC",
-        "continent_name": "Oceania",
-        "subdivisions": [
-          {
-            "iso_code": "NSW",
-            "name": "New South Wales"
-          }
-        ]
-      },
-      "asn_name": "Aussie Broadband",
-      "browser_details": {
-        "browser_name": "Chrome",
-        "browser_major_version": "146",
-        "browser_full_version": "146.0.0",
-        "os": "Windows",
-        "os_version": "11",
-        "device": "Other"
-      }
-    }
-  },
-  {
-    "sessionIdx": 2,
-    "sessionId": "cloak-f9335a82-40237",
-    "recordingUrl": "",
-    "rawJsonHits": [
-      {
-        "url": "https://demo.fingerprint.com/api/event/v4/1778024377293.AgG12V",
-        "body": {
-          "event_id": "1778024377293.AgG12V",
-          "timestamp": 1778024377302,
-          "linked_id": "session_id_93a5944f",
-          "environment_id": "ae_83d51ca3dcde8777",
-          "sdk": {
-            "platform": "js",
-            "version": "4.0.3",
-            "integrations": [
-              {
-                "name": "fingerprintjs-pro-cloudfront",
-                "version": "2.2.0"
-              },
-              {
-                "name": "fingerprintjs-pro-react",
-                "version": "3.0.0"
-              }
-            ]
-          },
-          "replayed": false,
-          "identification": {
-            "visitor_id": "RaKathDus0jJUb3BeaAZ",
-            "confidence": {
-              "score": 1,
-              "version": "v1.1"
-            },
-            "visitor_found": false,
-            "first_seen_at": 1778024377302
-          },
-          "url": "https://demo.fingerprint.com/playground",
-          "ip_address": "101.176.33.224",
-          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-          "browser_details": {
-            "browser_name": "Chrome",
-            "browser_major_version": "146",
-            "browser_full_version": "146.0.0",
-            "os": "Windows",
-            "os_version": "11",
-            "device": "Other"
-          },
-          "bot": "not_detected",
-          "developer_tools": false,
-          "ip_blocklist": {
-            "email_spam": false,
-            "attack_source": false,
-            "tor_node": false
-          },
-          "ip_info": {
-            "v4": {
-              "address": "101.176.33.224",
+              "address": "115.69.27.215",
               "geolocation": {
                 "accuracy_radius": 20,
                 "latitude": -37.814,
@@ -451,35 +76,35 @@
                   }
                 ]
               },
-              "asn": "1221",
-              "asn_name": "Telstra Limited",
-              "asn_network": "101.176.0.0/12",
+              "asn": "18390",
+              "asn_name": "Spintel Pty Ltd",
+              "asn_network": "115.69.0.0/18",
               "asn_type": "isp",
               "datacenter_result": false
             }
           },
           "proxy": false,
           "proxy_confidence": "high",
-          "incognito": true,
+          "incognito": false,
           "privacy_settings": false,
-          "suspect_score": 27,
-          "tampering": false,
+          "suspect_score": 40,
+          "tampering": true,
           "tampering_confidence": "high",
-          "tampering_ml_score": 0.3801,
+          "tampering_ml_score": 0.9999,
           "tampering_details": {
-            "anomaly_score": 0,
-            "anti_detect_browser": false
+            "anomaly_score": 1,
+            "anti_detect_browser": true
           },
           "velocity": {
             "distinct_ip": {
               "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
+              "1_hour": 2,
+              "24_hours": 8
             },
             "distinct_linked_id": {
               "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
+              "1_hour": 2,
+              "24_hours": 8
             },
             "distinct_country": {
               "5_minutes": 1,
@@ -488,8 +113,8 @@
             },
             "events": {
               "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
+              "1_hour": 2,
+              "24_hours": 8
             },
             "ip_events": {
               "5_minutes": 1,
@@ -508,12 +133,12 @@
             }
           },
           "virtual_machine": true,
-          "virtual_machine_ml_score": 0.363,
-          "vpn": false,
-          "vpn_confidence": "medium",
-          "vpn_origin_timezone": "Australia/Melbourne",
+          "virtual_machine_ml_score": 0.938,
+          "vpn": true,
+          "vpn_confidence": "low",
+          "vpn_origin_timezone": "Australia/Brisbane",
           "vpn_methods": {
-            "timezone_mismatch": false,
+            "timezone_mismatch": true,
             "public_vpn": false,
             "auxiliary_mobile": false,
             "os_mismatch": false,
@@ -525,49 +150,29 @@
               "default": 149.3125,
               "serif": 149.3125,
               "sans": 144.015625,
-              "mono": 132.625,
+              "mono": 132.609375,
               "apple": 149.3125,
               "min": 9.34375,
-              "system": 147.859375
+              "system": 144.640625
             },
             "emoji": {
               "font": "\"Times New Roman\"",
-              "width": 1757.5,
+              "width": 1597.078125,
               "height": 17,
-              "top": 10.984375,
-              "bottom": 27.984375,
-              "left": 7.96875,
-              "right": 1765.46875,
-              "x": 7.96875,
-              "y": 10.984375
+              "top": 9,
+              "bottom": 26,
+              "left": 8,
+              "right": 1605.078125,
+              "x": 8,
+              "y": 9
             },
-            "fonts": [
-              "Agency FB",
-              "Calibri",
-              "Century",
-              "Century Gothic",
-              "Franklin Gothic",
-              "Haettenschweiler",
-              "Helvetica Neue",
-              "Leelawadee",
-              "Lucida Bright",
-              "Lucida Sans",
-              "MS Outlook",
-              "MS Reference Specialty",
-              "MS UI Gothic",
-              "MT Extra",
-              "Marlett",
-              "Microsoft Uighur",
-              "Monotype Corsiva",
-              "Pristina",
-              "Segoe UI Light"
-            ],
-            "device_memory": 8,
-            "timezone": "Australia/Melbourne",
+            "fonts": [],
+            "device_memory": 16,
+            "timezone": "Australia/Brisbane",
             "canvas": {
               "winding": true,
-              "geometry": "9a06e8756396e8acd752ff343e36f497",
-              "text": "83c1deb560ca235a3be2aed011b1f965"
+              "geometry": "a026199e9ffa4b7a80240a7367594680",
+              "text": "cde0453f80cf6cb86e2bd18563751974"
             },
             "languages": [
               [
@@ -576,10 +181,10 @@
             ],
             "webgl_extensions": {
               "context_attributes": "6b1ed336830d2bc96442a9d76373252a",
-              "parameters": "0c46a373e74bab31361d77e13ec1511a",
-              "shader_precisions": "f223dfbcd580cf142da156d93790eb83",
-              "extensions": "1bebf3c88a5c43d35e87fc39e42cae23",
-              "extension_parameters": "dd1b201e03b7335375e71e4dfe781078",
+              "parameters": "3649a5f2a375c04762da32de699eb915",
+              "shader_precisions": "38a06fe03c499fb674a257f2e361878a",
+              "extensions": "a96513a0dc5a765b2c5cc7b5cc6d7c18",
+              "extension_parameters": "003f43d00ddcea29c1b1a9be057f4f31",
               "unsupported_extensions": []
             },
             "webgl_basics": {
@@ -587,7 +192,7 @@
               "vendor": "WebKit",
               "vendor_unmasked": "Google Inc. (NVIDIA)",
               "renderer": "WebKit WebGL",
-              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 (0x00002F04) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
               "shading_language_version": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
             },
             "screen_resolution": [
@@ -597,123 +202,51 @@
             "touch_support": {
               "touch_event": false,
               "touch_start": false,
-              "max_touch_points": 10
+              "max_touch_points": 0
             },
             "architecture": 255,
             "cookies_enabled": true,
             "hardware_concurrency": 8,
             "date_time_locale": "en-AU",
             "vendor": "Google Inc.",
-            "color_depth": 32,
+            "color_depth": 24,
             "platform": "Win32",
             "session_storage": true,
             "local_storage": true,
-            "audio": 124.0435864709143,
-            "plugins": [
-              {
-                "name": "PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Chrome PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Chromium PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Microsoft Edge PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "WebKit built-in PDF",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              }
-            ],
+            "audio": 124.04347541691823,
             "indexed_db": true,
             "math": "5f030fa7d2e5f9f757bfaf81642eb1a6",
-            "font_hash": "ad168398d2cd00c273f9fd7c0543a7e6",
+            "font_hash": "d751713988987e9331980363e24189ce",
             "timezone_offset": "+10:00"
           }
         }
       }
     ],
     "pageText": "",
-    "visitorId": "RaKathDus0jJUb3BeaAZ",
-    "bot": "not_detected",
+    "visitorId": "0CF0GpNrlAWaUgAQNfYu",
+    "bot": "bad",
     "smartSignals": {
-      "suspect_score": 27,
-      "tampering": false,
-      "tampering_ml_score": 0.3801,
+      "suspect_score": 40,
+      "tampering": true,
+      "tampering_ml_score": 0.9999,
       "tampering_details": {
-        "anomaly_score": 0,
-        "anti_detect_browser": false
+        "anomaly_score": 1,
+        "anti_detect_browser": true
       },
       "virtual_machine": true,
-      "virtual_machine_ml_score": 0.363,
-      "vpn": false,
-      "vpn_confidence": "medium",
+      "virtual_machine_ml_score": 0.938,
+      "vpn": true,
+      "vpn_confidence": "low",
       "vpn_methods": {
-        "timezone_mismatch": false,
+        "timezone_mismatch": true,
         "public_vpn": false,
         "auxiliary_mobile": false,
         "os_mismatch": false,
         "relay": false
       },
-      "incognito": true,
+      "incognito": false,
       "proxy": false,
-      "ip_address": "101.176.33.224",
+      "ip_address": "115.69.27.215",
       "ip_geolocation": {
         "accuracy_radius": 20,
         "latitude": -37.814,
@@ -732,388 +265,11 @@
           }
         ]
       },
-      "asn_name": "Telstra Limited",
+      "asn_name": "Spintel Pty Ltd",
       "browser_details": {
         "browser_name": "Chrome",
-        "browser_major_version": "146",
-        "browser_full_version": "146.0.0",
-        "os": "Windows",
-        "os_version": "11",
-        "device": "Other"
-      }
-    }
-  },
-  {
-    "sessionIdx": 3,
-    "sessionId": "cloak-26a0fe10-56732",
-    "recordingUrl": "",
-    "rawJsonHits": [
-      {
-        "url": "https://demo.fingerprint.com/api/event/v4/1778024399477.WCfDSj",
-        "body": {
-          "event_id": "1778024399477.WCfDSj",
-          "timestamp": 1778024399485,
-          "linked_id": "session_id_6cdd5a8f",
-          "environment_id": "ae_83d51ca3dcde8777",
-          "sdk": {
-            "platform": "js",
-            "version": "4.0.3",
-            "integrations": [
-              {
-                "name": "fingerprintjs-pro-cloudfront",
-                "version": "2.2.0"
-              },
-              {
-                "name": "fingerprintjs-pro-react",
-                "version": "3.0.0"
-              }
-            ]
-          },
-          "replayed": false,
-          "identification": {
-            "visitor_id": "39jqLRRCX031eNA3bHE3",
-            "confidence": {
-              "score": 1,
-              "version": "v1.1"
-            },
-            "visitor_found": false,
-            "first_seen_at": 1778024399485
-          },
-          "url": "https://demo.fingerprint.com/playground",
-          "ip_address": "58.111.208.84",
-          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
-          "browser_details": {
-            "browser_name": "Chrome",
-            "browser_major_version": "146",
-            "browser_full_version": "146.0.0",
-            "os": "Windows",
-            "os_version": "11",
-            "device": "Other"
-          },
-          "bot": "not_detected",
-          "developer_tools": false,
-          "ip_blocklist": {
-            "email_spam": false,
-            "attack_source": false,
-            "tor_node": false
-          },
-          "ip_info": {
-            "v4": {
-              "address": "58.111.208.84",
-              "geolocation": {
-                "accuracy_radius": 50,
-                "latitude": -32.92953,
-                "longitude": 151.7801,
-                "postal_code": "2300",
-                "timezone": "Australia/Sydney",
-                "city_name": "Newcastle",
-                "country_code": "AU",
-                "country_name": "Australia",
-                "continent_code": "OC",
-                "continent_name": "Oceania",
-                "subdivisions": [
-                  {
-                    "iso_code": "NSW",
-                    "name": "New South Wales"
-                  }
-                ]
-              },
-              "asn": "4804",
-              "asn_name": "Microplex PTY LTD",
-              "asn_network": "58.104.0.0/13",
-              "asn_type": "isp",
-              "datacenter_result": false
-            }
-          },
-          "proxy": true,
-          "proxy_confidence": "low",
-          "proxy_details": {
-            "proxy_type": "residential",
-            "last_seen_at": 1777593600000,
-            "provider": "Swiftproxy.net"
-          },
-          "incognito": true,
-          "privacy_settings": false,
-          "suspect_score": 28,
-          "tampering": false,
-          "tampering_confidence": "high",
-          "tampering_ml_score": 0.1962,
-          "tampering_details": {
-            "anomaly_score": 0,
-            "anti_detect_browser": false
-          },
-          "velocity": {
-            "distinct_ip": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_linked_id": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_country": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "events": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "ip_events": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_ip_by_linked_id": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            },
-            "distinct_visitor_id_by_linked_id": {
-              "5_minutes": 1,
-              "1_hour": 1,
-              "24_hours": 1
-            }
-          },
-          "virtual_machine": true,
-          "virtual_machine_ml_score": 0.655,
-          "vpn": false,
-          "vpn_confidence": "medium",
-          "vpn_origin_timezone": "Australia/Sydney",
-          "vpn_methods": {
-            "timezone_mismatch": false,
-            "public_vpn": false,
-            "auxiliary_mobile": false,
-            "os_mismatch": false,
-            "relay": false
-          },
-          "high_activity_device": false,
-          "raw_device_attributes": {
-            "font_preferences": {
-              "default": 149.3125,
-              "serif": 149.3125,
-              "sans": 144.015625,
-              "mono": 132.625,
-              "apple": 149.3125,
-              "min": 9.34375,
-              "system": 147.859375
-            },
-            "emoji": {
-              "font": "\"Times New Roman\"",
-              "width": 1757.5,
-              "height": 17,
-              "top": 10.96875,
-              "bottom": 27.96875,
-              "left": 7.953125,
-              "right": 1765.453125,
-              "x": 7.953125,
-              "y": 10.96875
-            },
-            "fonts": [
-              "Agency FB",
-              "Calibri",
-              "Century",
-              "Century Gothic",
-              "Franklin Gothic",
-              "Haettenschweiler",
-              "Helvetica Neue",
-              "Leelawadee",
-              "Lucida Bright",
-              "Lucida Sans",
-              "MS Outlook",
-              "MS Reference Specialty",
-              "MS UI Gothic",
-              "MT Extra",
-              "Marlett",
-              "Microsoft Uighur",
-              "Monotype Corsiva",
-              "Pristina",
-              "Segoe UI Light"
-            ],
-            "device_memory": 8,
-            "timezone": "Australia/Sydney",
-            "canvas": {
-              "winding": true,
-              "geometry": "23252b256b012d67419c3714d2f6efc0",
-              "text": "db4742fa678d866362f835ceccf5881a"
-            },
-            "languages": [
-              [
-                "en-AU"
-              ]
-            ],
-            "webgl_extensions": {
-              "context_attributes": "6b1ed336830d2bc96442a9d76373252a",
-              "parameters": "0c46a373e74bab31361d77e13ec1511a",
-              "shader_precisions": "f223dfbcd580cf142da156d93790eb83",
-              "extensions": "1bebf3c88a5c43d35e87fc39e42cae23",
-              "extension_parameters": "dd1b201e03b7335375e71e4dfe781078",
-              "unsupported_extensions": []
-            },
-            "webgl_basics": {
-              "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
-              "vendor": "WebKit",
-              "vendor_unmasked": "Google Inc. (NVIDIA)",
-              "renderer": "WebKit WebGL",
-              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3050 Ti Laptop GPU (0x000025A0) Direct3D11 vs_5_0 ps_5_0, D3D11)",
-              "shading_language_version": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
-            },
-            "screen_resolution": [
-              1920,
-              1080
-            ],
-            "touch_support": {
-              "touch_event": false,
-              "touch_start": false,
-              "max_touch_points": 10
-            },
-            "architecture": 255,
-            "cookies_enabled": true,
-            "hardware_concurrency": 8,
-            "date_time_locale": "en-AU",
-            "vendor": "Google Inc.",
-            "color_depth": 32,
-            "platform": "Win32",
-            "session_storage": true,
-            "local_storage": true,
-            "audio": 124.0433568940498,
-            "plugins": [
-              {
-                "name": "PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Chrome PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Chromium PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "Microsoft Edge PDF Viewer",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              },
-              {
-                "name": "WebKit built-in PDF",
-                "description": "Portable Document Format",
-                "mimeTypes": [
-                  {
-                    "type": "application/pdf",
-                    "suffixes": "pdf"
-                  },
-                  {
-                    "type": "text/pdf",
-                    "suffixes": "pdf"
-                  }
-                ]
-              }
-            ],
-            "indexed_db": true,
-            "math": "5f030fa7d2e5f9f757bfaf81642eb1a6",
-            "font_hash": "ad168398d2cd00c273f9fd7c0543a7e6",
-            "timezone_offset": "+10:00"
-          }
-        }
-      }
-    ],
-    "pageText": "",
-    "visitorId": "39jqLRRCX031eNA3bHE3",
-    "bot": "not_detected",
-    "smartSignals": {
-      "suspect_score": 28,
-      "tampering": false,
-      "tampering_ml_score": 0.1962,
-      "tampering_details": {
-        "anomaly_score": 0,
-        "anti_detect_browser": false
-      },
-      "virtual_machine": true,
-      "virtual_machine_ml_score": 0.655,
-      "vpn": false,
-      "vpn_confidence": "medium",
-      "vpn_methods": {
-        "timezone_mismatch": false,
-        "public_vpn": false,
-        "auxiliary_mobile": false,
-        "os_mismatch": false,
-        "relay": false
-      },
-      "incognito": true,
-      "proxy": true,
-      "proxy_details": {
-        "proxy_type": "residential",
-        "last_seen_at": 1777593600000,
-        "provider": "Swiftproxy.net"
-      },
-      "ip_address": "58.111.208.84",
-      "ip_geolocation": {
-        "accuracy_radius": 50,
-        "latitude": -32.92953,
-        "longitude": 151.7801,
-        "postal_code": "2300",
-        "timezone": "Australia/Sydney",
-        "city_name": "Newcastle",
-        "country_code": "AU",
-        "country_name": "Australia",
-        "continent_code": "OC",
-        "continent_name": "Oceania",
-        "subdivisions": [
-          {
-            "iso_code": "NSW",
-            "name": "New South Wales"
-          }
-        ]
-      },
-      "asn_name": "Microplex PTY LTD",
-      "browser_details": {
-        "browser_name": "Chrome",
-        "browser_major_version": "146",
-        "browser_full_version": "146.0.0",
+        "browser_major_version": "125",
+        "browser_full_version": "125.0.0",
         "os": "Windows",
         "os_version": "11",
         "device": "Other"
