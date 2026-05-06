@@ -474,6 +474,18 @@ export class AutomationEngine extends EventEmitter {
               const gp = handle.geoProfile;
               this.log("INFO", `  Geo: ${gp.countryCode} (${gp.timezone} / ${gp.locale})`);
             }
+            if (handle.uaProfile) {
+              const ua = handle.uaProfile;
+              this.log("INFO", `  UA: Chrome ${ua.chromeMajor} on ${ua.windowsLabel} (${ua.windowsVersion})`);
+            }
+            if (handle.resolutionProfile) {
+              const r = handle.resolutionProfile;
+              this.log("INFO", `  Resolution: ${r.width}x${r.height} (${r.label})`);
+            }
+            if (handle.fontProfile) {
+              const fp = handle.fontProfile;
+              this.log("INFO", `  Fonts: ${fp.name} (${fp.fonts.length} fonts)`);
+            }
 
             const page: Page = handle.page;
             page.setDefaultTimeout(30000);

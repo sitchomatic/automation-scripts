@@ -20,6 +20,9 @@ import { launchContext } from "cloakbrowser";
 import { getConsistentHardware, getHardwareArgs, type HardwareProfile } from "./profile-determinism.js";
 import { alignGeoToProxy, type GeoProfile } from "./profile-geo-alignment.js";
 import { buildCredentialNoiseProfile, type CredentialNoiseProfile } from "./profile-credential-noise.js";
+import { getConsistentUserAgent, getUserAgentArgs, type UAProfile } from "./profile-useragent.js";
+import { getFontProfile, type FontProfile } from "./profile-fonts.js";
+import { getConsistentResolution, getViewport, type Resolution } from "./profile-resolution.js";
 
 export type Backend = "cloak" | "browserbase";
 
@@ -87,6 +90,9 @@ export interface SessionHandle {
   hardwareProfile?: HardwareProfile;  // Phase-1: deterministic hardware preset (cloak only)
   geoProfile?: GeoProfile;             // Phase-1: timezone/locale aligned to proxy (cloak only)
   noiseProfile?: CredentialNoiseProfile; // Phase-1: per-credential canvas/WebGL/audio noise (cloak only)
+  uaProfile?: UAProfile;               // Phase-2: deterministic Chrome/Windows UA per credential (cloak only)
+  fontProfile?: FontProfile;           // Phase-2: deterministic font set per credential (cloak only, observability)
+  resolutionProfile?: Resolution;      // Phase-2: deterministic viewport per credential (cloak only)
   close: () => Promise<void>;
 }
 
@@ -103,7 +109,6 @@ export interface SessionOpts {
 }
 
 async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
-  const viewport = opts.viewport || { width: 1920, height: 1080 };
   const slowMo = opts.slowMo ?? 100;
   const seed = opts.fingerprintSeed ?? Math.floor(Math.random() * 89999) + 10000;
   const sessionId = `cloak-${crypto.randomUUID().slice(0, 8)}-${seed}`;
@@ -115,11 +120,20 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
   const noiseProfile = opts.email ? buildCredentialNoiseProfile(opts.email) : undefined;
   const hardwareGpuArgs = hardwareProfile ? getHardwareArgs(hardwareProfile) : ["--use-angle=d3d11"];
 
+  // Phase-2 quality profile: UA freshness, font consistency, resolution variety
+  const uaProfile = opts.email ? getConsistentUserAgent(opts.email) : undefined;
+  const fontProfile = opts.email ? getFontProfile(opts.email) : undefined;
+  const resolutionProfile = opts.email ? getConsistentResolution(opts.email) : undefined;
+  // Explicit opts.viewport always wins; otherwise use the per-credential resolution; else FHD default.
+  const viewport = opts.viewport ?? (resolutionProfile ? getViewport(resolutionProfile) : { width: 1920, height: 1080 });
+  // UA-derived binary flags. Falls back to a recent Win10 build when no credential is bound.
+  const uaArgs = uaProfile ? getUserAgentArgs(uaProfile) : ["--fingerprint-platform-version=10.0.19045"];
+
   // Build base launch args. Hardware-derived GPU arg replaces the static d3d11 default.
   const launchArgs = [
     `--fingerprint=${seed}`,
     "--fingerprint-platform=windows",      // spoof Windows — deterministic per-seed
-    "--fingerprint-platform-version=10.0.19045",  // recent Win10 build, hides headless/sandbox markers
+    ...uaArgs,                             // Phase-2: --fingerprint-platform-version + --fingerprint-browser-version
     // VM-detection mitigation: hide signals FP uses to flip virtual_machine: true
     "--disable-blink-features=AutomationControlled",
     "--use-gl=angle",                      // force ANGLE so WebGL renderer looks like real GPU
@@ -160,6 +174,9 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     hardwareProfile,
     geoProfile,
     noiseProfile,
+    uaProfile,
+    fontProfile,
+    resolutionProfile,
     close: async () => {
       await context.close().catch(() => { });
     },
