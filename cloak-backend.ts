@@ -27,7 +27,7 @@ import {
 } from "./profile-credential-noise.js";
 import { getConsistentUserAgent, getUserAgentArgs, type UAProfile } from "./profile-useragent.js";
 import { getFontProfile, type FontProfile } from "./profile-fonts.js";
-import { getConsistentResolution, getViewport, type Resolution } from "./profile-resolution.js";
+import { getConsistentResolution, getConsistentSmallResolution, getViewport, type Resolution } from "./profile-resolution.js";
 import { getInteractionPattern, type InteractionPattern } from "./profile-interaction.js";
 import {
   getExtensionProfile,
@@ -123,6 +123,53 @@ export interface SessionOpts {
   email?: string;                // Phase-1: enables hardware/geo/noise determinism per credential (cloak only)
 }
 
+// ─── Headed-mode window pool ────────────────────────────────────────────────
+// In headed/debug runs we keep a fixed 2x2 grid of long-lived browser windows
+// and recycle them across credentials. Each slot's window is positioned in one
+// quadrant of the screen; a row "closes" by clearing cookies/storage and
+// navigating to about:blank instead of tearing the window down. Images are
+// disabled by default to keep the debug grid responsive.
+const HEADED_GRID_COLS = 2;
+const HEADED_GRID_ROWS = 2;
+const HEADED_GRID_SIZE = HEADED_GRID_COLS * HEADED_GRID_ROWS;
+const SCREEN_WIDTH = parseInt(process.env.SCREEN_WIDTH || "1920", 10);
+const SCREEN_HEIGHT = parseInt(process.env.SCREEN_HEIGHT || "1040", 10); // -40 for taskbar
+
+interface PooledHeadedContext {
+  context: BrowserContext;
+  slot: number;
+  bounds: { x: number; y: number; w: number; h: number };
+}
+
+const headedPool: Map<number, PooledHeadedContext> = new Map();
+const headedSlotFree: number[] = Array.from({ length: HEADED_GRID_SIZE }, (_, i) => i);
+const headedSlotWaiters: Array<(n: number) => void> = [];
+
+function gridBounds(slot: number): { x: number; y: number; w: number; h: number } {
+  const cellW = Math.floor(SCREEN_WIDTH / HEADED_GRID_COLS);
+  const cellH = Math.floor(SCREEN_HEIGHT / HEADED_GRID_ROWS);
+  const col = slot % HEADED_GRID_COLS;
+  const row = Math.floor(slot / HEADED_GRID_COLS);
+  return { x: col * cellW, y: row * cellH, w: cellW, h: cellH };
+}
+
+async function acquireHeadedSlot(): Promise<number> {
+  if (headedSlotFree.length > 0) return headedSlotFree.shift()!;
+  return new Promise<number>((r) => headedSlotWaiters.push(r));
+}
+
+function releaseHeadedSlot(n: number): void {
+  if (headedSlotWaiters.length > 0) headedSlotWaiters.shift()!(n);
+  else headedSlotFree.push(n);
+}
+
+/** Tear down all pooled headed windows. Call on shutdown for clean exit. */
+export async function shutdownHeadedPool(): Promise<void> {
+  const entries = Array.from(headedPool.values());
+  headedPool.clear();
+  await Promise.all(entries.map((p) => p.context.close().catch(() => { })));
+}
+
 async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
   const slowMo = opts.slowMo ?? 100;
   const seed = opts.fingerprintSeed ?? Math.floor(Math.random() * 89999) + 10000;
@@ -138,9 +185,17 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
   // Phase-2 quality profile: UA freshness, font consistency, resolution variety
   const uaProfile = opts.email ? getConsistentUserAgent(opts.email) : undefined;
   const fontProfile = opts.email ? getFontProfile(opts.email) : undefined;
-  const resolutionProfile = opts.email ? getConsistentResolution(opts.email) : undefined;
-  // Explicit opts.viewport always wins; otherwise use the per-credential resolution; else FHD default.
-  const viewport = opts.viewport ?? (resolutionProfile ? getViewport(resolutionProfile) : { width: 1920, height: 1080 });
+  // HEADLESS env override (default true). Set HEADLESS=false to see windows.
+  // Headed runs use the SMALL resolution pool so debug windows fit on screen.
+  const envHeadless = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
+  const headlessEffective = opts.headless ?? envHeadless;
+  const resolutionProfile = opts.email
+    ? (headlessEffective ? getConsistentResolution(opts.email) : getConsistentSmallResolution(opts.email))
+    : undefined;
+  // Explicit opts.viewport always wins; otherwise use the per-credential resolution.
+  // Default falls back to a small viewport when headed, FHD when headless.
+  const viewport = opts.viewport
+    ?? (resolutionProfile ? getViewport(resolutionProfile) : (headlessEffective ? { width: 1920, height: 1080 } : { width: 1280, height: 720 }));
   // UA-derived binary flags. Falls back to a recent Win10 build when no credential is bound.
   const uaArgs = uaProfile ? getUserAgentArgs(uaProfile) : ["--fingerprint-platform-version=10.0.19045"];
 
@@ -168,10 +223,113 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     "--metrics-recording-only",
   ];
 
-  // HEADLESS env override (default true). Set HEADLESS=false to see windows.
-  const envHeadless = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
+  // ─── Headed/debug grid path: reuse pooled windows, no images, 2x2 grid ────
+  if (!headlessEffective) {
+    const slot = await acquireHeadedSlot();
+    const bounds = gridBounds(slot);
+    // Cell content area minus rough chrome padding (title bar + frame).
+    const cellViewport = {
+      width: Math.max(800, bounds.w - 16),
+      height: Math.max(500, bounds.h - 88),
+    };
+    const viewportEffective = opts.viewport ?? cellViewport;
+    // Replace logged resolution with the actual grid cell so engine logs match
+    // what's on screen.
+    const headedResolution: Resolution = {
+      width: viewportEffective.width,
+      height: viewportEffective.height,
+      share: 0,
+      label: `headed-grid-${slot}`,
+    };
+
+    let pooled = headedPool.get(slot);
+    if (!pooled) {
+      const headedArgs = [
+        ...launchArgs,
+        `--window-position=${bounds.x},${bounds.y}`,
+        `--window-size=${bounds.w},${bounds.h}`,
+        "--blink-settings=imagesEnabled=false",   // skip images for snappy debug
+        "--disable-features=TranslateUI",
+      ];
+      const newCtx = await launchContext({
+        headless: false,
+        proxy,
+        geoip: !!proxy,
+        humanize: true,
+        viewport: viewportEffective,
+        ...(geoProfile ? { timezone: geoProfile.timezone, locale: geoProfile.locale } : {}),
+        args: headedArgs,
+        launchOptions: { slowMo },
+      });
+      // Init scripts are added ONCE per pooled context (re-adding accumulates).
+      if (noiseProfile) {
+        await newCtx.addInitScript({ content: getCanvasNoiseInjectionScript(noiseProfile) });
+        await newCtx.addInitScript({ content: getWebGLNoiseInjectionScript(noiseProfile) });
+      }
+      if (extensionProfile) {
+        await newCtx.addInitScript({ content: getExtensionInjectionScript(extensionProfile) });
+      }
+      if (cacheProfile) {
+        await newCtx.addInitScript({ content: getCacheInjectionScript(cacheProfile) });
+      }
+      newCtx.on("close", () => { headedPool.delete(slot); });
+      pooled = { context: newCtx, slot, bounds };
+      headedPool.set(slot, pooled);
+    } else {
+      // Reuse: drop cookies, close extra tabs, resize, navigate blank.
+      await pooled.context.clearCookies().catch(() => { });
+      const pages = pooled.context.pages();
+      for (let i = 1; i < pages.length; i++) {
+        await pages[i].close().catch(() => { });
+      }
+      const main = pooled.context.pages()[0] ?? (await pooled.context.newPage());
+      await main.setViewportSize(viewportEffective).catch(() => { });
+      await main.goto("about:blank").catch(() => { });
+      await main.evaluate(() => {
+        try { localStorage.clear(); sessionStorage.clear(); } catch { /* opaque origin */ }
+      }).catch(() => { });
+    }
+
+    const pageRef = pooled.context.pages()[0] ?? (await pooled.context.newPage());
+    const ctxRef = pooled.context;
+    return {
+      context: ctxRef,
+      page: pageRef,
+      sessionId,
+      recordingUrl: "",
+      backend: "cloak",
+      fingerprintSeed: seed,
+      proxyUsed: proxy,
+      hardwareProfile,
+      geoProfile,
+      noiseProfile,
+      uaProfile,
+      fontProfile,
+      resolutionProfile: headedResolution,
+      interactionProfile,
+      extensionProfile,
+      cacheProfile,
+      close: async () => {
+        try {
+          await ctxRef.clearCookies().catch(() => { });
+          const ps = ctxRef.pages();
+          for (let i = 1; i < ps.length; i++) await ps[i].close().catch(() => { });
+          const m = ctxRef.pages()[0];
+          if (m) {
+            await m.goto("about:blank").catch(() => { });
+            await m.evaluate(() => {
+              try { localStorage.clear(); sessionStorage.clear(); } catch { /* opaque */ }
+            }).catch(() => { });
+          }
+        } finally {
+          releaseHeadedSlot(slot);
+        }
+      },
+    };
+  }
+
   const context = await launchContext({
-    headless: opts.headless ?? envHeadless,
+    headless: headlessEffective,
     proxy,
     geoip: !!proxy,                          // auto TZ/locale/WebRTC IP from proxy exit
     humanize: true,                          // human mouse curves + keystroke timing

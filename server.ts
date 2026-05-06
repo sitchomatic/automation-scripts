@@ -34,6 +34,12 @@ const wss = new WebSocketServer({ server: httpServer });
 
 const engine = new AutomationEngine();
 let cachedCredentials: Credential[] = engine.loadCredentials(CSV_PATH);
+// Live-tunable concurrency. Defaults to 1 (headed-debug mode); persisted across
+// runs so the dashboard's last value is reused when the user clicks Start again.
+let currentConcurrency = 1;
+// Live-tunable input + speed modes (see engine.ts setters). Persisted across runs.
+let currentInputMode: "autofill" | "keyboard" = "autofill";
+let currentSpeedMode: "fast" | "normal" = "fast";
 
 // Serve static files
 app.use(express.static(path.join(__dirname, "public")));
@@ -72,7 +78,9 @@ wss.on("connection", (ws: any) => {
           projectId: PROJECT_ID ? `${PROJECT_ID.substring(0, 8)}...` : "",
           hasApiKey: !!API_KEY,
           hasProjectId: !!PROJECT_ID,
-          concurrency: 1, // headed-debug mode
+          concurrency: currentConcurrency,
+          inputMode: currentInputMode,
+          speedMode: currentSpeedMode,
           maxRetries: 2,
           targets: DEFAULT_TARGETS.map((t) => t.name),
         },
@@ -104,22 +112,34 @@ wss.on("connection", (ws: any) => {
             return;
           }
 
-          const credentials = cachedCredentials;
+          let credentials = cachedCredentials;
+          const selectedEmails = msg.data?.emails;
+          if (selectedEmails && Array.isArray(selectedEmails)) {
+            const emailSet = new Set(selectedEmails);
+            credentials = credentials.filter(c => emailSet.has(c.email));
+          }
+
           if (credentials.length === 0) {
             ws.send(
-              JSON.stringify({ type: "error", data: { message: "No credentials found in credentials.csv" } })
+              JSON.stringify({ type: "error", data: { message: "No credentials to test" } })
             );
             return;
           }
 
-          // Concurrency 1 for live debugging / headed runs.
+          // Use live-tunable concurrency from dashboard (default 1 = headed-debug).
           const config: EngineConfig = {
             apiKey: API_KEY,
             projectId: PROJECT_ID,
-            concurrency: 1,
+            concurrency: currentConcurrency,
             maxRetries: 2,
             targets: DEFAULT_TARGETS,
           };
+
+          // Pin the manual override so the engine respects the dashboard value
+          // immediately (before warmup/throttle logic kicks in).
+          engine.setConcurrency(currentConcurrency);
+          engine.setInputMode(currentInputMode);
+          engine.setSpeedMode(currentSpeedMode);
 
           // Run in background (don't await)
           engine.start(credentials, config).catch((err) => {
@@ -133,6 +153,42 @@ wss.on("connection", (ws: any) => {
 
         case "stop": {
           engine.stop();
+          break;
+        }
+
+        case "set-concurrency": {
+          const requested = Number(msg.data?.value);
+          if (!Number.isFinite(requested) || requested < 1) {
+            ws.send(JSON.stringify({ type: "error", data: { message: "set-concurrency: value must be >= 1" } }));
+            return;
+          }
+          const applied = engine.setConcurrency(requested);
+          currentConcurrency = applied;
+          broadcast({ type: "concurrency", data: { value: applied } });
+          break;
+        }
+
+        case "set-input-mode": {
+          const v = String(msg.data?.value || "").toLowerCase();
+          if (v !== "autofill" && v !== "keyboard") {
+            ws.send(JSON.stringify({ type: "error", data: { message: "set-input-mode: value must be autofill|keyboard" } }));
+            return;
+          }
+          const applied = engine.setInputMode(v);
+          currentInputMode = applied;
+          broadcast({ type: "input-mode", data: { value: applied } });
+          break;
+        }
+
+        case "set-speed-mode": {
+          const v = String(msg.data?.value || "").toLowerCase();
+          if (v !== "fast" && v !== "normal") {
+            ws.send(JSON.stringify({ type: "error", data: { message: "set-speed-mode: value must be fast|normal" } }));
+            return;
+          }
+          const applied = engine.setSpeedMode(v);
+          currentSpeedMode = applied;
+          broadcast({ type: "speed-mode", data: { value: applied } });
           break;
         }
 

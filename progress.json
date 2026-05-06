@@ -1,24 +1,167 @@
 {
-  "updatedAt": "2026-05-06T02:34:10.365Z",
+  "updatedAt": "2026-05-06T09:28:10.596Z",
   "rows": [
     {
       "rowIndex": 0,
-      "email": "phuttasopit@hotmail.co.th",
+      "email": "aaron.szabo3@gmail.com",
       "status": "done",
-      "currentBatch": 1,
+      "currentBatch": 0,
       "sites": {
         "joe": {
-          "outcome": "success",
-          "attempts": 1
+          "outcome": "permdisabled",
+          "attempts": 0
         },
         "ignition": {
-          "outcome": "tempdisabled",
+          "outcome": "permdisabled",
           "attempts": 0
         }
       },
-      "sessionId": "cloak-518a8e4b-21768",
-      "recordingUrl": "",
-      "tempDisabledUntil": "2026-05-06T03:34:09.617Z"
+      "sessionId": "cloak-6f5f33a8-26184",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 1,
+      "email": "aaronepagett082@gmail.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-7800b88e-76047",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 2,
+      "email": "ab225iver@gmail.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "noaccount",
+          "attempts": 4
+        },
+        "ignition": {
+          "outcome": "noaccount",
+          "attempts": 4
+        }
+      },
+      "sessionId": "cloak-32ec4b42-69712",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 3,
+      "email": "acampbell031990@gmail.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-8fdf04e6-88209",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 4,
+      "email": "acf7691@gmail.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-ea5e562d-82449",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 5,
+      "email": "adam.emily1@bigpond.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-d3cc93ab-94728",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 6,
+      "email": "adam_dreyer_83@outlook.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-34ae5b15-38180",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 7,
+      "email": "adambarnes27@gmail.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-56df213a-91305",
+      "recordingUrl": ""
+    },
+    {
+      "rowIndex": 8,
+      "email": "adamdev1809@gmail.com",
+      "status": "done",
+      "currentBatch": 0,
+      "sites": {
+        "joe": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        },
+        "ignition": {
+          "outcome": "permdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-e9bf1c22-49468",
+      "recordingUrl": ""
     }
   ]
 }

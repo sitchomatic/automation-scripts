@@ -32,6 +32,20 @@ const RESOLUTION_POOL: Resolution[] = [
   { width: 3840, height: 2160, share: 3, label: "4K-UHD" },
 ];
 
+/**
+ * Compact pool used for headed/debug runs so multiple windows fit on a
+ * developer screen without overlapping. Still plausible (low-end laptops,
+ * small browser windows) so fingerprints don't look obviously synthetic.
+ */
+const SMALL_RESOLUTION_POOL: Resolution[] = [
+  { width: 1024, height: 600, share: 0, label: "WSVGA-netbook" },
+  { width: 1024, height: 768, share: 0, label: "XGA" },
+  { width: 1152, height: 720, share: 0, label: "compact-16:10" },
+  { width: 1200, height: 720, share: 0, label: "compact-5:3" },
+  { width: 1280, height: 720, share: 0, label: "HD-window" },
+  { width: 1280, height: 800, share: 0, label: "WXGA" },
+];
+
 function hashEmail(email: string): number {
   const normalized = email.trim().toLowerCase();
   const digest = crypto.createHash("sha256").update(normalized).digest();
@@ -73,5 +87,19 @@ export function getResolutionPoolSize(): number {
 /** Read-only view of the pool. */
 export function listResolutionPool(): readonly Resolution[] {
   return RESOLUTION_POOL;
+}
+
+/**
+ * Deterministic small viewport for headed/debug runs.
+ * Same email → same compact resolution every call.
+ */
+export function getConsistentSmallResolution(email: string): Resolution {
+  const idx = hashEmail(email) % SMALL_RESOLUTION_POOL.length;
+  return { ...SMALL_RESOLUTION_POOL[idx] };
+}
+
+/** Read-only view of the small pool. */
+export function listSmallResolutionPool(): readonly Resolution[] {
+  return SMALL_RESOLUTION_POOL;
 }
 

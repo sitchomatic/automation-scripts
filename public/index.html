@@ -1,320 +1,1008 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dual-Target Validator</title>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-:root{--bg:#08090d;--surface:#0f1117;--card:#161822;--border:rgba(255,255,255,.06);--border-h:rgba(255,255,255,.1);--text:#e2e8f0;--text2:#8892a8;--accent:#00d4ff;--accent2:#7c3aed;--green:#10b981;--red:#ef4444;--amber:#f59e0b;--grad:linear-gradient(135deg,#00d4ff,#7c3aed)}
-body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;overflow-x:hidden}
-/* Header */
-.header{padding:20px 32px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);background:var(--surface)}
-.header h1{font-size:18px;font-weight:700;display:flex;align-items:center;gap:10px}
-.header h1 .icon{width:32px;height:32px;border-radius:8px;background:var(--grad);display:flex;align-items:center;justify-content:center;font-size:16px}
-.header .status-pill{padding:5px 14px;border-radius:20px;font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-.pill-idle{background:rgba(136,146,168,.15);color:var(--text2)}
-.pill-running{background:rgba(0,212,255,.15);color:var(--accent);animation:pulse 2s infinite}
-.pill-done{background:rgba(16,185,129,.15);color:var(--green)}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
-/* Layout */
-.main{padding:24px 32px;max-width:1400px;margin:0 auto}
-/* Stats Row */
-.stats{display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin-bottom:24px}
-.stat-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px;position:relative;overflow:hidden;transition:border-color .2s}
-.stat-card:hover{border-color:var(--border-h)}
-.stat-card .label{font-size:12px;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px}
-.stat-card .value{font-size:28px;font-weight:700;font-family:'JetBrains Mono',monospace}
-.stat-card .bar{position:absolute;bottom:0;left:0;height:3px;border-radius:0 2px 0 0;transition:width .6s ease}
-.stat-card.total .value{color:var(--text)}.stat-card.total .bar{background:var(--accent);width:100%}
-.stat-card.success .value{color:var(--green)}.stat-card.success .bar{background:var(--green)}
-.stat-card.noaccount .value{color:var(--text2)}.stat-card.noaccount .bar{background:var(--text2)}
-.stat-card.permdisabled .value{color:#f87171}.stat-card.permdisabled .bar{background:#f87171}
-.stat-card.tempdisabled .value{color:var(--amber)}.stat-card.tempdisabled .bar{background:var(--amber)}
-.stat-card.pending .value{color:var(--text2)}.stat-card.pending .bar{background:var(--text2)}
-/* Controls */
-.controls{display:flex;gap:12px;margin-bottom:24px;align-items:center}
-.btn{padding:10px 24px;border-radius:8px;border:none;font-family:'Inter',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:8px}
-.btn-start{background:var(--grad);color:#fff}.btn-start:hover{opacity:.85}
-.btn-start:disabled{opacity:.4;cursor:not-allowed}
-.btn-stop{background:rgba(239,68,68,.15);color:var(--red);border:1px solid rgba(239,68,68,.2)}.btn-stop:hover{background:rgba(239,68,68,.25)}
-.btn-stop:disabled{opacity:.3;cursor:not-allowed}
-.btn-secondary{background:var(--card);color:var(--text2);border:1px solid var(--border)}.btn-secondary:hover{border-color:var(--border-h);color:var(--text)}
-.concurrency-control{margin-left:auto;display:flex;align-items:center;gap:8px;color:var(--text2);font-size:13px}
-.concurrency-control input{width:60px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--card);color:var(--text);font-family:'JetBrains Mono',monospace;font-size:13px;text-align:center}
-/* Progress */
-.progress-wrap{margin-bottom:24px;display:none}
-.progress-bar{height:4px;background:var(--card);border-radius:4px;overflow:hidden}
-.progress-fill{height:100%;background:var(--grad);border-radius:4px;transition:width .4s ease;width:0}
-.progress-text{font-size:12px;color:var(--text2);margin-top:6px;text-align:right;font-family:'JetBrains Mono',monospace}
-/* Content Grid */
-.content{display:grid;grid-template-columns:1fr 380px;gap:20px}
-@media(max-width:1100px){.content{grid-template-columns:1fr}.stats{grid-template-columns:repeat(3,1fr)}}
-/* Table */
-.table-wrap{background:var(--card);border:1px solid var(--border);border-radius:12px;overflow:hidden}
-.table-header{padding:16px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text2);display:flex;align-items:center;gap:8px}
-table{width:100%;border-collapse:collapse}
-th{padding:10px 16px;text-align:left;font-size:11px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)}
-td{padding:12px 16px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
-tr:last-child td{border-bottom:none}
-tr.row-running{background:rgba(0,212,255,.03)}
-tr.row-done{opacity:.85}
-tr.row-disabled{opacity:.5}
-.email-cell{font-family:'JetBrains Mono',monospace;font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Badges */
-.badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;font-family:'JetBrains Mono',monospace}
-.badge-queued{background:rgba(136,146,168,.1);color:var(--text2)}
-.badge-testing{background:rgba(0,212,255,.12);color:var(--accent);animation:pulse 1.5s infinite}
-.badge-success{background:rgba(16,185,129,.12);color:var(--green)}
-.badge-noaccount{background:rgba(136,146,168,.15);color:var(--text2)}
-.badge-permdisabled{background:rgba(248,113,113,.15);color:#f87171}
-.badge-tempdisabled{background:rgba(245,158,11,.15);color:var(--amber)}
-.badge-na{background:rgba(239,68,68,.12);color:var(--red)}
-.badge-skipped{background:rgba(136,146,168,.1);color:var(--text2)}
-.badge-done{background:rgba(16,185,129,.12);color:var(--green)}
-.row-num{color:var(--text2);font-family:'JetBrains Mono',monospace;font-size:12px;width:30px}
-/* Log Panel */
-.log-panel{background:var(--card);border:1px solid var(--border);border-radius:12px;display:flex;flex-direction:column;max-height:600px}
-.log-header{padding:16px 20px;border-bottom:1px solid var(--border);font-size:13px;font-weight:600;color:var(--text2);display:flex;justify-content:space-between;align-items:center}
-.log-body{flex:1;overflow-y:auto;padding:12px 16px;font-family:'JetBrains Mono',monospace;font-size:11px;line-height:1.8}
-.log-line{display:flex;gap:8px;opacity:0;animation:fadeIn .3s forwards}
-@keyframes fadeIn{to{opacity:1}}
-.log-time{color:var(--text2);flex-shrink:0}
-.log-level{font-weight:600;flex-shrink:0;width:36px}
-.log-level.INFO{color:var(--accent)}.log-level.OK{color:var(--green)}.log-level.WARN{color:var(--amber)}.log-level.ERR{color:var(--red)}.log-level.SNAP{color:#c084fc}
-.log-msg{color:var(--text);word-break:break-all}
-/* Screenshot thumbnails */
-.log-screenshot{margin:4px 0 6px 44px}
-.log-screenshot img{max-width:280px;border-radius:6px;border:1px solid var(--border);cursor:pointer;transition:transform .2s,box-shadow .2s}
-.log-screenshot img:hover{transform:scale(1.03);box-shadow:0 4px 20px rgba(0,0,0,.5)}
-.screenshot-overlay{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.85);display:none;justify-content:center;align-items:center;z-index:1000;cursor:pointer}
-.screenshot-overlay img{max-width:90%;max-height:90%;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6)}
-/* Toast */
-.toast{position:fixed;bottom:24px;right:24px;padding:14px 20px;border-radius:10px;font-size:13px;font-weight:500;z-index:999;transform:translateY(100px);opacity:0;transition:all .3s ease}
-.toast.show{transform:translateY(0);opacity:1}
-.toast-error{background:rgba(239,68,68,.9);color:#fff}
-.toast-success{background:rgba(16,185,129,.9);color:#fff}
-/* Scrollbar */
-::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:transparent}::-webkit-scrollbar-thumb{background:var(--border-h);border-radius:3px}
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dual-Target Validator</title>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box
+    }
+
+    :root {
+      --bg: #08090d;
+      --surface: #0f1117;
+      --card: #161822;
+      --border: rgba(255, 255, 255, .06);
+      --border-h: rgba(255, 255, 255, .1);
+      --text: #e2e8f0;
+      --text2: #8892a8;
+      --accent: #00d4ff;
+      --accent2: #7c3aed;
+      --green: #10b981;
+      --red: #ef4444;
+      --amber: #f59e0b;
+      --grad: linear-gradient(135deg, #00d4ff, #7c3aed)
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden
+    }
+
+    /* Header */
+    .header {
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface)
+    }
+
+    .header h1 {
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 10px
+    }
+
+    .header h1 .icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--grad);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px
+    }
+
+    .header .status-pill {
+      padding: 5px 14px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .5px
+    }
+
+    .pill-idle {
+      background: rgba(136, 146, 168, .15);
+      color: var(--text2)
+    }
+
+    .pill-running {
+      background: rgba(0, 212, 255, .15);
+      color: var(--accent);
+      animation: pulse 2s infinite
+    }
+
+    .pill-done {
+      background: rgba(16, 185, 129, .15);
+      color: var(--green)
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: .6
+      }
+    }
+
+    /* Layout */
+    .main {
+      padding: 24px 32px;
+      max-width: 1400px;
+      margin: 0 auto
+    }
+
+    /* Stats Row */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+      margin-bottom: 24px
+    }
+
+    .stat-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 20px;
+      position: relative;
+      overflow: hidden;
+      transition: border-color .2s
+    }
+
+    .stat-card:hover {
+      border-color: var(--border-h)
+    }
+
+    .stat-card .label {
+      font-size: 12px;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      margin-bottom: 8px
+    }
+
+    .stat-card .value {
+      font-size: 28px;
+      font-weight: 700;
+      font-family: 'JetBrains Mono', monospace
+    }
+
+    .stat-card .bar {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      height: 3px;
+      border-radius: 0 2px 0 0;
+      transition: width .6s ease
+    }
+
+    .stat-card.total .value {
+      color: var(--text)
+    }
+
+    .stat-card.total .bar {
+      background: var(--accent);
+      width: 100%
+    }
+
+    .stat-card.success .value {
+      color: var(--green)
+    }
+
+    .stat-card.success .bar {
+      background: var(--green)
+    }
+
+    .stat-card.noaccount .value {
+      color: var(--text2)
+    }
+
+    .stat-card.noaccount .bar {
+      background: var(--text2)
+    }
+
+    .stat-card.permdisabled .value {
+      color: #f87171
+    }
+
+    .stat-card.permdisabled .bar {
+      background: #f87171
+    }
+
+    .stat-card.tempdisabled .value {
+      color: var(--amber)
+    }
+
+    .stat-card.tempdisabled .bar {
+      background: var(--amber)
+    }
+
+    .stat-card.pending .value {
+      color: var(--text2)
+    }
+
+    .stat-card.pending .bar {
+      background: var(--text2)
+    }
+
+    /* Controls */
+    .controls {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 24px;
+      align-items: center
+    }
+
+    .btn {
+      padding: 10px 24px;
+      border-radius: 8px;
+      border: none;
+      font-family: 'Inter', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .2s;
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    .btn-start {
+      background: var(--grad);
+      color: #fff
+    }
+
+    .btn-start:hover {
+      opacity: .85
+    }
+
+    .btn-start:disabled {
+      opacity: .4;
+      cursor: not-allowed
+    }
+
+    .btn-stop {
+      background: rgba(239, 68, 68, .15);
+      color: var(--red);
+      border: 1px solid rgba(239, 68, 68, .2)
+    }
+
+    .btn-stop:hover {
+      background: rgba(239, 68, 68, .25)
+    }
+
+    .btn-stop:disabled {
+      opacity: .3;
+      cursor: not-allowed
+    }
+
+    .btn-secondary {
+      background: var(--card);
+      color: var(--text2);
+      border: 1px solid var(--border)
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--border-h);
+      color: var(--text)
+    }
+
+    .concurrency-control {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text2);
+      font-size: 13px
+    }
+
+    .concurrency-control input {
+      width: 60px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      text-align: center
+    }
+
+    /* Progress */
+    .progress-wrap {
+      margin-bottom: 24px;
+      display: none
+    }
+
+    .progress-bar {
+      height: 4px;
+      background: var(--card);
+      border-radius: 4px;
+      overflow: hidden
+    }
+
+    .progress-fill {
+      height: 100%;
+      background: var(--grad);
+      border-radius: 4px;
+      transition: width .4s ease;
+      width: 0
+    }
+
+    .progress-text {
+      font-size: 12px;
+      color: var(--text2);
+      margin-top: 6px;
+      text-align: right;
+      font-family: 'JetBrains Mono', monospace
+    }
+
+    /* Content Grid */
+    .content {
+      display: grid;
+      grid-template-columns: 1fr 380px;
+      gap: 20px
+    }
+
+    @media(max-width:1100px) {
+      .content {
+        grid-template-columns: 1fr
+      }
+
+      .stats {
+        grid-template-columns: repeat(3, 1fr)
+      }
+    }
+
+    /* Table */
+    .table-wrap {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      overflow: hidden
+    }
+
+    .table-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text2);
+      display: flex;
+      align-items: center;
+      gap: 8px
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse
+    }
+
+    th {
+      padding: 10px 16px;
+      text-align: left;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text2);
+      text-transform: uppercase;
+      letter-spacing: .8px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, .02)
+    }
+
+    td {
+      padding: 12px 16px;
+      font-size: 13px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle
+    }
+
+    tr:last-child td {
+      border-bottom: none
+    }
+
+    tr.row-running {
+      background: rgba(0, 212, 255, .03)
+    }
+
+    tr.row-done {
+      opacity: .85
+    }
+
+    tr.row-disabled {
+      opacity: .5
+    }
+
+    .email-cell {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 3px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      font-family: 'JetBrains Mono', monospace
+    }
+
+    .badge-queued {
+      background: rgba(136, 146, 168, .1);
+      color: var(--text2)
+    }
+
+    .badge-testing {
+      background: rgba(0, 212, 255, .12);
+      color: var(--accent);
+      animation: pulse 1.5s infinite
+    }
+
+    .badge-success {
+      background: rgba(16, 185, 129, .12);
+      color: var(--green)
+    }
+
+    .badge-noaccount {
+      background: rgba(136, 146, 168, .15);
+      color: var(--text2)
+    }
+
+    .badge-permdisabled {
+      background: rgba(248, 113, 113, .15);
+      color: #f87171
+    }
+
+    .badge-tempdisabled {
+      background: rgba(245, 158, 11, .15);
+      color: var(--amber)
+    }
+
+    .badge-na {
+      background: rgba(239, 68, 68, .12);
+      color: var(--red)
+    }
+
+    .badge-skipped {
+      background: rgba(136, 146, 168, .1);
+      color: var(--text2)
+    }
+
+    .badge-done {
+      background: rgba(16, 185, 129, .12);
+      color: var(--green)
+    }
+
+    .row-num {
+      color: var(--text2);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      width: 30px
+    }
+
+    /* Log Panel */
+    .log-panel {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      display: flex;
+      flex-direction: column;
+      max-height: 600px
+    }
+
+    .log-header {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text2);
+      display: flex;
+      justify-content: space-between;
+      align-items: center
+    }
+
+    .log-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      line-height: 1.8
+    }
+
+    .log-line {
+      display: flex;
+      gap: 8px;
+      opacity: 0;
+      animation: fadeIn .3s forwards
+    }
+
+    @keyframes fadeIn {
+      to {
+        opacity: 1
+      }
+    }
+
+    .log-time {
+      color: var(--text2);
+      flex-shrink: 0
+    }
+
+    .log-level {
+      font-weight: 600;
+      flex-shrink: 0;
+      width: 36px
+    }
+
+    .log-level.INFO {
+      color: var(--accent)
+    }
+
+    .log-level.OK {
+      color: var(--green)
+    }
+
+    .log-level.WARN {
+      color: var(--amber)
+    }
+
+    .log-level.ERR {
+      color: var(--red)
+    }
+
+    .log-level.SNAP {
+      color: #c084fc
+    }
+
+    .log-msg {
+      color: var(--text);
+      word-break: break-all
+    }
+
+    /* Screenshot thumbnails */
+    .log-screenshot {
+      margin: 4px 0 6px 44px
+    }
+
+    .log-screenshot img {
+      max-width: 280px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: transform .2s, box-shadow .2s
+    }
+
+    .log-screenshot img:hover {
+      transform: scale(1.03);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, .5)
+    }
+
+    .screenshot-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, .85);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+      cursor: pointer
+    }
+
+    .screenshot-overlay img {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 8px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, .6)
+    }
+
+    /* Toast */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 14px 20px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 999;
+      transform: translateY(100px);
+      opacity: 0;
+      transition: all .3s ease
+    }
+
+    .toast.show {
+      transform: translateY(0);
+      opacity: 1
+    }
+
+    .toast-error {
+      background: rgba(239, 68, 68, .9);
+      color: #fff
+    }
+
+    .toast-success {
+      background: rgba(16, 185, 129, .9);
+      color: #fff
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-h);
+      border-radius: 3px
+    }
+  </style>
 </head>
+
 <body>
 
-<div class="header">
-  <h1><div class="icon">⚡</div> Dual-Target Validator</h1>
-  <div id="statusPill" class="status-pill pill-idle">Idle</div>
-</div>
-
-<div class="main">
-  <!-- Stats -->
-  <div class="stats">
-    <div class="stat-card total"><div class="label">Total Tests</div><div class="value" id="statTotal">0</div><div class="bar"></div></div>
-    <div class="stat-card success"><div class="label">Success</div><div class="value" id="statSuccess">0</div><div class="bar"></div></div>
-    <div class="stat-card noaccount"><div class="label">No Account</div><div class="value" id="statNoaccount">0</div><div class="bar"></div></div>
-    <div class="stat-card permdisabled"><div class="label">Perm Disabled</div><div class="value" id="statPermdisabled">0</div><div class="bar"></div></div>
-    <div class="stat-card tempdisabled"><div class="label">Temp Disabled</div><div class="value" id="statTempdisabled">0</div><div class="bar"></div></div>
-    <div class="stat-card pending"><div class="label">Queued</div><div class="value" id="statPending">0</div><div class="bar"></div></div>
+  <div class="header">
+    <h1>
+      <div class="icon">⚡</div> Dual-Target Validator
+    </h1>
+    <div id="statusPill" class="status-pill pill-idle">Idle</div>
   </div>
 
-  <!-- Controls -->
-  <div class="controls">
-    <button class="btn btn-start" id="btnStart" onclick="startAutomation()">▶ Start All</button>
-    <button class="btn btn-stop" id="btnStop" onclick="stopAutomation()" disabled>⏹ Stop</button>
-    <button class="btn btn-secondary" onclick="refreshCSV()">↻ Reload CSV</button>
-    <div class="concurrency-control">
-      <span style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace">concurrency 1 · headed (HEADLESS=false)</span>
-    </div>
-  </div>
-
-  <!-- Progress -->
-  <div class="progress-wrap" id="progressWrap">
-    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-    <div class="progress-text" id="progressText">0 / 0</div>
-  </div>
-
-  <!-- Content -->
-  <div class="content">
-    <div class="table-wrap">
-      <div class="table-header">📋 Credential Queue</div>
-      <div style="overflow-x:auto">
-        <table>
-          <thead><tr>
-            <th>#</th><th>Email</th><th id="thSite1">Joe</th><th id="thSite2">Ignition</th><th>Status</th><th>Live</th>
-          </tr></thead>
-          <tbody id="tableBody"></tbody>
-        </table>
+  <div class="main">
+    <!-- Stats -->
+    <div class="stats">
+      <div class="stat-card total">
+        <div class="label">Total Tests</div>
+        <div class="value" id="statTotal">0</div>
+        <div class="bar"></div>
+      </div>
+      <div class="stat-card success">
+        <div class="label">Success</div>
+        <div class="value" id="statSuccess">0</div>
+        <div class="bar"></div>
+      </div>
+      <div class="stat-card noaccount">
+        <div class="label">No Account</div>
+        <div class="value" id="statNoaccount">0</div>
+        <div class="bar"></div>
+      </div>
+      <div class="stat-card permdisabled">
+        <div class="label">Perm Disabled</div>
+        <div class="value" id="statPermdisabled">0</div>
+        <div class="bar"></div>
+      </div>
+      <div class="stat-card tempdisabled">
+        <div class="label">Temp Disabled</div>
+        <div class="value" id="statTempdisabled">0</div>
+        <div class="bar"></div>
+      </div>
+      <div class="stat-card pending">
+        <div class="label">Queued</div>
+        <div class="value" id="statPending">0</div>
+        <div class="bar"></div>
       </div>
     </div>
-    <div class="log-panel">
-      <div class="log-header"><span>📡 Live Log</span><button class="btn btn-secondary" style="padding:4px 10px;font-size:11px" onclick="clearLog()">Clear</button></div>
-      <div class="log-body" id="logBody"></div>
+
+    <!-- Controls -->
+    <div class="controls">
+      <button class="btn btn-start" id="btnStart" onclick="startAutomation()">▶ Start Selected</button>
+      <button class="btn btn-stop" id="btnStop" onclick="stopAutomation()" disabled>⏹ Stop</button>
+      <button class="btn btn-secondary" onclick="removeSelected()">🗑 Remove Selected</button>
+      <button class="btn btn-secondary" onclick="refreshCSV()">↻ Reload CSV</button>
+      <div class="concurrency-control" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <label for="concurrencyInput"
+          style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace">concurrency</label>
+        <input id="concurrencyInput" type="number" min="1" max="5" step="1" value="1"
+          onchange="setConcurrency(this.value)"
+          style="width:52px;padding:4px 6px;font-size:13px;font-family:'JetBrains Mono',monospace;background:var(--surface-1,#1a1f2e);color:var(--text);border:1px solid var(--border,#2a3142);border-radius:4px;text-align:center" />
+        <label for="inputModeSelect"
+          style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-left:6px">input</label>
+        <select id="inputModeSelect" onchange="setInputMode(this.value)"
+          style="padding:4px 6px;font-size:13px;font-family:'JetBrains Mono',monospace;background:var(--surface-1,#1a1f2e);color:var(--text);border:1px solid var(--border,#2a3142);border-radius:4px">
+          <option value="autofill">autofill</option>
+          <option value="keyboard">keyboard</option>
+        </select>
+        <label for="speedModeSelect"
+          style="font-size:12px;color:var(--text2);font-family:'JetBrains Mono',monospace;margin-left:6px">speed</label>
+        <select id="speedModeSelect" onchange="setSpeedMode(this.value)"
+          style="padding:4px 6px;font-size:13px;font-family:'JetBrains Mono',monospace;background:var(--surface-1,#1a1f2e);color:var(--text);border:1px solid var(--border,#2a3142);border-radius:4px">
+          <option value="fast">fast</option>
+          <option value="normal">normal</option>
+        </select>
+        <span id="concurrencyHint" style="font-size:11px;color:var(--text2);font-family:'JetBrains Mono',monospace">live
+          · headed</span>
+      </div>
+    </div>
+
+    <!-- Progress -->
+    <div class="progress-wrap" id="progressWrap">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text" id="progressText">0 / 0</div>
+    </div>
+
+    <!-- Content -->
+    <div class="content">
+      <div class="table-wrap">
+        <div class="table-header">📋 Credential Queue</div>
+        <div style="overflow-x:auto">
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 40px"><input type="checkbox" id="selectAll" checked
+                    onchange="toggleAll(this.checked)"></th>
+                <th>#</th>
+                <th>Email</th>
+                <th id="thSite1">Joe</th>
+                <th id="thSite2">Ignition</th>
+                <th>Status</th>
+                <th>Live</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="log-panel">
+        <div class="log-header"><span>📡 Live Log</span><button class="btn btn-secondary"
+            style="padding:4px 10px;font-size:11px" onclick="clearLog()">Clear</button></div>
+        <div class="log-body" id="logBody"></div>
+      </div>
     </div>
   </div>
-</div>
 
-<div class="toast" id="toast"></div>
-<div class="screenshot-overlay" id="screenshotOverlay" onclick="this.style.display='none'"><img id="overlayImg"></div>
+  <div class="toast" id="toast"></div>
+  <div class="screenshot-overlay" id="screenshotOverlay" onclick="this.style.display='none'"><img id="overlayImg"></div>
 
-<script>
-// ─── State ───
-let ws = null;
-let credentials = [];
-let rows = [];
-let targets = ['joe', 'ignition'];
-let isRunning = false;
-let reconnectAttempt = 0;
+  <script>
+    // ─── State ───
+    let ws = null;
+    let credentials = [];
+    let rows = [];
+    let targets = ['joe', 'ignition'];
+    let isRunning = false;
+    let reconnectAttempt = 0;
 
-// ─── WebSocket ───
-function connect() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  ws = new WebSocket(`${proto}://${location.host}`);
+    // ─── WebSocket ───
+    function connect() {
+      const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+      ws = new WebSocket(`${proto}://${location.host}`);
 
-  ws.onopen = () => {
-    reconnectAttempt = 0;
-    addLog('INFO', 'Connected to server');
-  };
+      ws.onopen = () => {
+        reconnectAttempt = 0;
+        addLog('INFO', 'Connected to server');
+      };
 
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      switch (msg.type) {
-        case 'init': handleInit(msg.data); break;
-        case 'started': handleStarted(msg.data); break;
-        case 'row-update': handleRowUpdate(msg.data); break;
-        case 'log': handleLog(msg.data); break;
-        case 'complete': handleComplete(msg.data); break;
-        case 'stopping': addLog('WARN', 'Stopping...'); break;
-        case 'credentials': handleCredentials(msg.data); break;
-        case 'screenshot': handleScreenshot(msg.data); break;
-        case 'error': showToast(msg.data.message, 'error'); addLog('ERR', msg.data.message); break;
-      }
-    } catch (err) {
-      addLog('ERR', 'Failed to parse server message');
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          switch (msg.type) {
+            case 'init': handleInit(msg.data); break;
+            case 'started': handleStarted(msg.data); break;
+            case 'row-update': handleRowUpdate(msg.data); break;
+            case 'log': handleLog(msg.data); break;
+            case 'complete': handleComplete(msg.data); break;
+            case 'stopping': addLog('WARN', 'Stopping...'); break;
+            case 'credentials': handleCredentials(msg.data); break;
+            case 'screenshot': handleScreenshot(msg.data); break;
+            case 'concurrency': handleConcurrency(msg.data); break;
+            case 'input-mode': handleInputMode(msg.data); break;
+            case 'speed-mode': handleSpeedMode(msg.data); break;
+            case 'error': showToast(msg.data.message, 'error'); addLog('ERR', msg.data.message); break;
+          }
+        } catch (err) {
+          addLog('ERR', 'Failed to parse server message');
+        }
+      };
+
+      ws.onclose = () => {
+        reconnectAttempt++;
+        const delay = Math.min(3000 * Math.pow(2, reconnectAttempt - 1), 30000);
+        addLog('WARN', `Disconnected — reconnecting in ${(delay / 1000).toFixed(0)}s (attempt ${reconnectAttempt})...`);
+        setTimeout(connect, delay);
+      };
     }
-  };
 
-  ws.onclose = () => {
-    reconnectAttempt++;
-    const delay = Math.min(3000 * Math.pow(2, reconnectAttempt - 1), 30000);
-    addLog('WARN', `Disconnected — reconnecting in ${(delay/1000).toFixed(0)}s (attempt ${reconnectAttempt})...`);
-    setTimeout(connect, delay);
-  };
-}
+    function handleInit(data) {
+      credentials = data.credentials || [];
+      targets = data.config?.targets || targets;
+      if (data.rows && data.rows.length > 0) { rows = data.rows; }
+      if (data.isRunning) { setRunningState(true); }
+      updateHeaders();
+      renderTable();
+      updateStats();
+      const c = Number(data.config?.concurrency);
+      if (Number.isFinite(c)) {
+        const input = document.getElementById('concurrencyInput');
+        if (input) input.value = String(c);
+      }
+      const im = data.config?.inputMode;
+      if (im === 'autofill' || im === 'keyboard') {
+        const sel = document.getElementById('inputModeSelect');
+        if (sel) sel.value = im;
+      }
+      const sm = data.config?.speedMode;
+      if (sm === 'fast' || sm === 'normal') {
+        const sel = document.getElementById('speedModeSelect');
+        if (sel) sel.value = sm;
+      }
+    }
 
-function handleInit(data) {
-  credentials = data.credentials || [];
-  targets = data.config?.targets || targets;
-  if (data.rows && data.rows.length > 0) { rows = data.rows; }
-  if (data.isRunning) { setRunningState(true); }
-  updateHeaders();
-  renderTable();
-  updateStats();
-  // concurrency is displayed as static label, no input to set
-}
+    function handleStarted(data) {
+      setRunningState(true);
+      targets = data.targets || targets;
+      rows = [];
+      updateHeaders();
+      document.getElementById('progressWrap').style.display = 'block';
+    }
 
-function handleStarted(data) {
-  setRunningState(true);
-  targets = data.targets || targets;
-  rows = [];
-  updateHeaders();
-  document.getElementById('progressWrap').style.display = 'block';
-}
+    function handleRowUpdate(data) {
+      rows[data.rowIndex] = data;
+      renderRowInPlace(data.rowIndex);
+      updateStats();
+      updateProgress();
+    }
 
-function handleRowUpdate(data) {
-  rows[data.rowIndex] = data;
-  renderRowInPlace(data.rowIndex);
-  updateStats();
-  updateProgress();
-}
+    function handleLog(data) {
+      addLog(data.level, data.message);
+    }
 
-function handleLog(data) {
-  addLog(data.level, data.message);
-}
+    function handleScreenshot(data) {
+      const body = document.getElementById('logBody');
+      const div = document.createElement('div');
+      div.className = 'log-screenshot';
+      div.innerHTML = `<img src="data:image/jpeg;base64,${data.base64}" alt="${escapeHtml(data.label)}" title="${escapeHtml(data.label)}" onclick="showOverlay(this.src)">`;
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+    }
 
-function handleScreenshot(data) {
-  const body = document.getElementById('logBody');
-  const div = document.createElement('div');
-  div.className = 'log-screenshot';
-  div.innerHTML = `<img src="data:image/jpeg;base64,${data.base64}" alt="${escapeHtml(data.label)}" title="${escapeHtml(data.label)}" onclick="showOverlay(this.src)">`;
-  body.appendChild(div);
-  body.scrollTop = body.scrollHeight;
-}
+    function showOverlay(src) {
+      document.getElementById('overlayImg').src = src;
+      document.getElementById('screenshotOverlay').style.display = 'flex';
+    }
 
-function showOverlay(src) {
-  document.getElementById('overlayImg').src = src;
-  document.getElementById('screenshotOverlay').style.display = 'flex';
-}
+    function handleComplete(data) {
+      rows = data.rows || rows;
+      setRunningState(false);
+      renderTable();
+      updateStats();
+      updateProgress();
+      showToast('Automation complete!', 'success');
+    }
 
-function handleComplete(data) {
-  rows = data.rows || rows;
-  setRunningState(false);
-  renderTable();
-  updateStats();
-  updateProgress();
-  showToast('Automation complete!', 'success');
-}
+    function handleCredentials(data) {
+      credentials = data.credentials || [];
+      rows = [];
+      renderTable();
+      updateStats();
+      showToast(`Loaded ${credentials.length} credentials`, 'success');
+    }
 
-function handleCredentials(data) {
-  credentials = data.credentials || [];
-  rows = [];
-  renderTable();
-  updateStats();
-  showToast(`Loaded ${credentials.length} credentials`, 'success');
-}
+    // ─── Actions ───
+    function startAutomation() {
+      const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+      const selectedEmails = Array.from(checkboxes).map(cb => cb.value);
+      if (selectedEmails.length === 0) {
+        showToast('Please select at least one credential', 'error');
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'start', data: { emails: selectedEmails } }));
+    }
 
-// ─── Actions ───
-function startAutomation() {
-  ws.send(JSON.stringify({ type: 'start' }));
-}
+    function stopAutomation() {
+      ws.send(JSON.stringify({ type: 'stop' }));
+    }
 
-function stopAutomation() {
-  ws.send(JSON.stringify({ type: 'stop' }));
-}
+    function refreshCSV() {
+      ws.send(JSON.stringify({ type: 'refresh-csv' }));
+    }
 
-function refreshCSV() {
-  ws.send(JSON.stringify({ type: 'refresh-csv' }));
-}
+    function setConcurrency(raw) {
+      const n = Math.max(1, Math.min(5, parseInt(raw, 10) || 1));
+      const input = document.getElementById('concurrencyInput');
+      if (input) input.value = String(n);
+      ws.send(JSON.stringify({ type: 'set-concurrency', data: { value: n } }));
+    }
 
-// ─── UI Updates ───
-function setRunningState(running) {
-  isRunning = running;
-  document.getElementById('btnStart').disabled = running;
-  document.getElementById('btnStop').disabled = !running;
-  const pill = document.getElementById('statusPill');
-  pill.className = 'status-pill ' + (running ? 'pill-running' : 'pill-idle');
-  pill.textContent = running ? 'Running' : 'Idle';
-}
+    function handleConcurrency(data) {
+      const v = Number(data?.value);
+      if (!Number.isFinite(v)) return;
+      const input = document.getElementById('concurrencyInput');
+      if (input && Number(input.value) !== v) input.value = String(v);
+      addLog('INFO', `Concurrency set to ${v}`);
+    }
 
-function updateHeaders() {
-  const th1 = document.getElementById('thSite1');
-  const th2 = document.getElementById('thSite2');
-  if (targets[0]) th1.textContent = targets[0].charAt(0).toUpperCase() + targets[0].slice(1);
-  if (targets[1]) th2.textContent = targets[1].charAt(0).toUpperCase() + targets[1].slice(1);
-}
+    function setInputMode(v) {
+      if (v !== 'autofill' && v !== 'keyboard') return;
+      ws.send(JSON.stringify({ type: 'set-input-mode', data: { value: v } }));
+    }
 
-function renderTable() {
-  const body = document.getElementById('tableBody');
-  const count = rows.length > 0 ? rows.length : credentials.length;
-  let html = '';
-  for (let i = 0; i < count; i++) {
-    html += buildRowHTML(i);
-  }
-  body.innerHTML = html;
-  document.getElementById('statTotal').textContent = count * targets.length;
-}
+    function handleInputMode(data) {
+      const v = data?.value;
+      if (v !== 'autofill' && v !== 'keyboard') return;
+      const sel = document.getElementById('inputModeSelect');
+      if (sel && sel.value !== v) sel.value = v;
+      addLog('INFO', `Input mode set to ${v}`);
+    }
 
-function buildRowHTML(i) {
-  const row = rows[i];
-  const email = row ? row.email : (credentials[i]?.email || '—');
-  const status = row ? row.status : 'queued';
-  const cls = status === 'testing' ? 'row-running' : status === 'done' ? 'row-done' : '';
+    function setSpeedMode(v) {
+      if (v !== 'fast' && v !== 'normal') return;
+      ws.send(JSON.stringify({ type: 'set-speed-mode', data: { value: v } }));
+    }
 
-  let s1 = row?.sites?.[targets[0]] || null;
-  let s2 = row?.sites?.[targets[1]] || null;
-  const liveLink = row?.recordingUrl ? `<a href="${row.recordingUrl}" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600;font-size:12px;">📺 View</a>` : '<span style="color:var(--text2)">—</span>';
+    function handleSpeedMode(data) {
+      const v = data?.value;
+      if (v !== 'fast' && v !== 'normal') return;
+      const sel = document.getElementById('speedModeSelect');
+      if (sel && sel.value !== v) sel.value = v;
+      addLog('INFO', `Speed mode set to ${v}`);
+    }
 
-  return `<tr id="row-${i}" class="${cls}">
+    // ─── UI Updates ───
+    function setRunningState(running) {
+      isRunning = running;
+      document.getElementById('btnStart').disabled = running;
+      document.getElementById('btnStop').disabled = !running;
+      const pill = document.getElementById('statusPill');
+      pill.className = 'status-pill ' + (running ? 'pill-running' : 'pill-idle');
+      pill.textContent = running ? 'Running' : 'Idle';
+    }
+
+    function updateHeaders() {
+      const th1 = document.getElementById('thSite1');
+      const th2 = document.getElementById('thSite2');
+      if (targets[0]) th1.textContent = targets[0].charAt(0).toUpperCase() + targets[0].slice(1);
+      if (targets[1]) th2.textContent = targets[1].charAt(0).toUpperCase() + targets[1].slice(1);
+    }
+
+    function renderTable() {
+      const body = document.getElementById('tableBody');
+      const count = rows.length > 0 ? rows.length : credentials.length;
+      let html = '';
+      for (let i = 0; i < count; i++) {
+        html += buildRowHTML(i);
+      }
+      body.innerHTML = html;
+      document.getElementById('statTotal').textContent = count * targets.length;
+    }
+
+    window.unselectedEmails = new Set();
+
+    function toggleAll(checked) {
+      const checkboxes = document.querySelectorAll('.row-checkbox');
+      checkboxes.forEach(cb => {
+        cb.checked = checked;
+        if (checked) window.unselectedEmails.delete(cb.value);
+        else window.unselectedEmails.add(cb.value);
+      });
+    }
+
+    function toggleRow(email, checked) {
+      if (checked) window.unselectedEmails.delete(email);
+      else window.unselectedEmails.add(email);
+      const allChecked = document.querySelectorAll('.row-checkbox:not(:checked)').length === 0;
+      document.getElementById('selectAll').checked = allChecked;
+    }
+
+    function removeSelected() {
+      const checkboxes = document.querySelectorAll('.row-checkbox:checked');
+      const toRemove = new Set(Array.from(checkboxes).map(cb => cb.value));
+      credentials = credentials.filter(c => !toRemove.has(c.email));
+      rows = rows.filter(r => !toRemove.has(r.email));
+      window.unselectedEmails.clear();
+      document.getElementById('selectAll').checked = true;
+      renderTable();
+      updateStats();
+      showToast(`Removed ${toRemove.size} credentials`, 'success');
+    }
+
+    function buildRowHTML(i) {
+      const row = rows[i];
+      const email = row ? row.email : (credentials[i]?.email || '—');
+      const status = row ? row.status : 'queued';
+      const cls = status === 'testing' ? 'row-running' : status === 'done' ? 'row-done' : '';
+
+      let s1 = row?.sites?.[targets[0]] || null;
+      let s2 = row?.sites?.[targets[1]] || null;
+      const liveLink = row?.recordingUrl ? `<a href="${row.recordingUrl}" target="_blank" style="color:var(--accent);text-decoration:none;font-weight:600;font-size:12px;">📺 View</a>` : '<span style="color:var(--text2)">—</span>';
+      const isChecked = !window.unselectedEmails.has(email) ? 'checked' : '';
+
+      return `<tr id="row-${i}" class="${cls}">
+    <td><input type="checkbox" class="row-checkbox" value="${email}" ${isChecked} onchange="toggleRow('${email}', this.checked)"></td>
     <td class="row-num">${i + 1}</td>
     <td class="email-cell" title="${email}">${email}</td>
     <td>${badgeHTML(s1)}</td>
@@ -322,109 +1010,110 @@ function buildRowHTML(i) {
     <td>${statusBadge(status)}</td>
     <td>${liveLink}</td>
   </tr>`;
-}
-
-function renderRowInPlace(i) {
-  const existing = document.getElementById('row-' + i);
-  if (existing) {
-    const temp = document.createElement('tbody');
-    temp.innerHTML = buildRowHTML(i);
-    existing.replaceWith(temp.firstElementChild);
-  } else {
-    document.getElementById('tableBody').insertAdjacentHTML('beforeend', buildRowHTML(i));
-  }
-}
-
-function badgeHTML(site) {
-  if (!site) return '<span class="badge badge-queued">—</span>';
-  const o = site.outcome;
-  const clsMap = { queued:'queued', testing:'testing', success:'success', noaccount:'noaccount', permdisabled:'permdisabled', tempdisabled:'tempdisabled', 'N/A':'na' };
-  const cls = clsMap[o] || 'queued';
-  const labelMap = { queued:'—', testing:'⟳' };
-  const label = labelMap[o] || o;
-  return `<span class="badge badge-${cls}">${label}</span>`;
-}
-
-function statusBadge(s) {
-  const map = { queued: ['queued','Queued'], testing: ['testing','Testing'], done: ['done','Done'], skipped: ['skipped','Skip'] };
-  const [cls, label] = map[s] || ['queued', s];
-  return `<span class="badge badge-${cls}">${label}</span>`;
-}
-
-function updateStats() {
-  let success = 0, noaccount = 0, permdisabled = 0, tempdisabled = 0, pending = 0;
-  for (const row of rows) {
-    for (const t of targets) {
-      const o = row.sites?.[t]?.outcome;
-      if (o === 'success') success++;
-      else if (o === 'noaccount') noaccount++;
-      else if (o === 'permdisabled') permdisabled++;
-      else if (o === 'tempdisabled') tempdisabled++;
-      else pending++;
     }
-  }
-  if (rows.length === 0) pending = credentials.length * targets.length;
-  document.getElementById('statTotal').textContent = (rows.length || credentials.length) * targets.length;
-  document.getElementById('statSuccess').textContent = success;
-  document.getElementById('statNoaccount').textContent = noaccount;
-  document.getElementById('statPermdisabled').textContent = permdisabled;
-  document.getElementById('statTempdisabled').textContent = tempdisabled;
-  document.getElementById('statPending').textContent = pending;
 
-  // Animate progress bars on stat cards
-  const total = Math.max((rows.length || credentials.length) * targets.length, 1);
-  setBarWidth('.stat-card.success .bar', success / total * 100);
-  setBarWidth('.stat-card.noaccount .bar', noaccount / total * 100);
-  setBarWidth('.stat-card.permdisabled .bar', permdisabled / total * 100);
-  setBarWidth('.stat-card.tempdisabled .bar', tempdisabled / total * 100);
-}
+    function renderRowInPlace(i) {
+      const existing = document.getElementById('row-' + i);
+      if (existing) {
+        const temp = document.createElement('tbody');
+        temp.innerHTML = buildRowHTML(i);
+        existing.replaceWith(temp.firstElementChild);
+      } else {
+        document.getElementById('tableBody').insertAdjacentHTML('beforeend', buildRowHTML(i));
+      }
+    }
 
-function setBarWidth(sel, pct) {
-  const el = document.querySelector(sel);
-  if (el) el.style.width = Math.min(pct, 100) + '%';
-}
+    function badgeHTML(site) {
+      if (!site) return '<span class="badge badge-queued">—</span>';
+      const o = site.outcome;
+      const clsMap = { queued: 'queued', testing: 'testing', success: 'success', noaccount: 'noaccount', permdisabled: 'permdisabled', tempdisabled: 'tempdisabled', 'N/A': 'na' };
+      const cls = clsMap[o] || 'queued';
+      const labelMap = { queued: '—', testing: '⟳' };
+      const label = labelMap[o] || o;
+      return `<span class="badge badge-${cls}">${label}</span>`;
+    }
 
-function updateProgress() {
-  const done = rows.filter(r => r.status === 'done' || r.status === 'skipped').length;
-  const total = rows.length || credentials.length;
-  const pct = total > 0 ? (done / total * 100) : 0;
-  document.getElementById('progressFill').style.width = pct + '%';
-  document.getElementById('progressText').textContent = `${done} / ${total} rows`;
-  if (done === total && total > 0) {
-    document.getElementById('statusPill').className = 'status-pill pill-done';
-    document.getElementById('statusPill').textContent = 'Complete';
-  }
-}
+    function statusBadge(s) {
+      const map = { queued: ['queued', 'Queued'], testing: ['testing', 'Testing'], done: ['done', 'Done'], skipped: ['skipped', 'Skip'] };
+      const [cls, label] = map[s] || ['queued', s];
+      return `<span class="badge badge-${cls}">${label}</span>`;
+    }
 
-// ─── Log ───
-function addLog(level, message) {
-  const body = document.getElementById('logBody');
-  const time = new Date().toLocaleTimeString('en-AU', { hour12: false });
-  const div = document.createElement('div');
-  div.className = 'log-line';
-  div.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-msg">${escapeHtml(message)}</span>`;
-  body.appendChild(div);
-  body.scrollTop = body.scrollHeight;
-  // Keep max 200 lines
-  while (body.children.length > 200) body.removeChild(body.firstChild);
-}
+    function updateStats() {
+      let success = 0, noaccount = 0, permdisabled = 0, tempdisabled = 0, pending = 0;
+      for (const row of rows) {
+        for (const t of targets) {
+          const o = row.sites?.[t]?.outcome;
+          if (o === 'success') success++;
+          else if (o === 'noaccount') noaccount++;
+          else if (o === 'permdisabled') permdisabled++;
+          else if (o === 'tempdisabled') tempdisabled++;
+          else pending++;
+        }
+      }
+      if (rows.length === 0) pending = credentials.length * targets.length;
+      document.getElementById('statTotal').textContent = (rows.length || credentials.length) * targets.length;
+      document.getElementById('statSuccess').textContent = success;
+      document.getElementById('statNoaccount').textContent = noaccount;
+      document.getElementById('statPermdisabled').textContent = permdisabled;
+      document.getElementById('statTempdisabled').textContent = tempdisabled;
+      document.getElementById('statPending').textContent = pending;
 
-function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+      // Animate progress bars on stat cards
+      const total = Math.max((rows.length || credentials.length) * targets.length, 1);
+      setBarWidth('.stat-card.success .bar', success / total * 100);
+      setBarWidth('.stat-card.noaccount .bar', noaccount / total * 100);
+      setBarWidth('.stat-card.permdisabled .bar', permdisabled / total * 100);
+      setBarWidth('.stat-card.tempdisabled .bar', tempdisabled / total * 100);
+    }
 
-function escapeHtml(s) {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-}
+    function setBarWidth(sel, pct) {
+      const el = document.querySelector(sel);
+      if (el) el.style.width = Math.min(pct, 100) + '%';
+    }
 
-// ─── Toast ───
-function showToast(msg, type) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.className = 'toast toast-' + type + ' show';
-  setTimeout(() => t.classList.remove('show'), 4000);
-}
+    function updateProgress() {
+      const done = rows.filter(r => r.status === 'done' || r.status === 'skipped').length;
+      const total = rows.length || credentials.length;
+      const pct = total > 0 ? (done / total * 100) : 0;
+      document.getElementById('progressFill').style.width = pct + '%';
+      document.getElementById('progressText').textContent = `${done} / ${total} rows`;
+      if (done === total && total > 0) {
+        document.getElementById('statusPill').className = 'status-pill pill-done';
+        document.getElementById('statusPill').textContent = 'Complete';
+      }
+    }
 
-// ─── Init ───
-connect();
-</script>
+    // ─── Log ───
+    function addLog(level, message) {
+      const body = document.getElementById('logBody');
+      const time = new Date().toLocaleTimeString('en-AU', { hour12: false });
+      const div = document.createElement('div');
+      div.className = 'log-line';
+      div.innerHTML = `<span class="log-time">${time}</span><span class="log-level ${level}">${level}</span><span class="log-msg">${escapeHtml(message)}</span>`;
+      body.appendChild(div);
+      body.scrollTop = body.scrollHeight;
+      // Keep max 200 lines
+      while (body.children.length > 200) body.removeChild(body.firstChild);
+    }
+
+    function clearLog() { document.getElementById('logBody').innerHTML = ''; }
+
+    function escapeHtml(s) {
+      return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ─── Toast ───
+    function showToast(msg, type) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = 'toast toast-' + type + ' show';
+      setTimeout(() => t.classList.remove('show'), 4000);
+    }
+
+    // ─── Init ───
+    connect();
+  </script>
 </body>
+
 </html>
