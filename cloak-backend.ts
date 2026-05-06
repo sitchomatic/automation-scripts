@@ -49,10 +49,19 @@ function loadProxyPool(): string[] {
 
 const PROXY_POOL: string[] = loadProxyPool();
 
-/** Picks a proxy for this session: pool > single URL > none. Random sticky-session per call. */
-export function pickProxy(): string | undefined {
-  if (PROXY_POOL.length > 0) return PROXY_POOL[Math.floor(Math.random() * PROXY_POOL.length)];
+/** Picks a proxy for this session: pool > single URL > none. Random sticky-session per call.
+ *  `exclude` lets a caller skip already-tried proxies during per-row retry. */
+export function pickProxy(exclude: string[] = []): string | undefined {
+  if (PROXY_POOL.length > 0) {
+    const candidates = exclude.length > 0 ? PROXY_POOL.filter((p) => !exclude.includes(p)) : PROXY_POOL;
+    const pool = candidates.length > 0 ? candidates : PROXY_POOL; // fall back to full pool if exhausted
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
   return AU_PROXY_URL || undefined;
+}
+
+export function getProxyPoolSize(): number {
+  return PROXY_POOL.length;
 }
 
 export const PROXY_INFO = (() => {
@@ -68,6 +77,7 @@ export interface SessionHandle {
   recordingUrl: string;          // empty for cloak
   backend: Backend;
   fingerprintSeed?: number;      // cloak only
+  proxyUsed?: string;            // proxy URL actually picked for this session (cloak only)
   close: () => Promise<void>;
 }
 
@@ -79,14 +89,15 @@ export interface SessionOpts {
   fingerprintSeed?: number;      // cloak: deterministic seed; default = random
   headless?: boolean;            // cloak only
   timeoutSec?: number;           // browserbase session timeout
+  excludeProxies?: string[];     // cloak only: proxies to skip when picking from pool (per-row retry)
 }
 
 async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
   const viewport = opts.viewport || { width: 1920, height: 1080 };
-  const slowMo = opts.slowMo ?? 250;
+  const slowMo = opts.slowMo ?? 100;
   const seed = opts.fingerprintSeed ?? Math.floor(Math.random() * 89999) + 10000;
   const sessionId = `cloak-${crypto.randomUUID().slice(0, 8)}-${seed}`;
-  const proxy = pickProxy();
+  const proxy = pickProxy(opts.excludeProxies || []);
 
   const context = await launchContext({
     headless: opts.headless ?? true,
@@ -96,7 +107,17 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     viewport,
     args: [
       `--fingerprint=${seed}`,
-      "--fingerprint-platform=windows",      // spoof Windows even though we run on Windows — keeps it deterministic per-seed
+      "--fingerprint-platform=windows",      // spoof Windows — deterministic per-seed
+      "--fingerprint-platform-version=10.0.19045",  // recent Win10 build, hides headless/sandbox markers
+      // VM-detection mitigation: hide signals FP uses to flip virtual_machine: true
+      "--disable-blink-features=AutomationControlled",
+      "--use-gl=angle",                      // force ANGLE so WebGL renderer looks like real GPU
+      "--use-angle=d3d11",                   // D3D11 backend → matches a real Windows host
+      "--enable-features=Vulkan",            // advertise Vulkan support (hardware hosts have it)
+      "--disable-features=IsolateOrigins,site-per-process,UserAgentClientHint",
+      "--enable-accelerated-2d-canvas",
+      "--enable-accelerated-video-decode",
+      "--ignore-gpu-blocklist",
     ],
     launchOptions: { slowMo },
   });
@@ -110,6 +131,7 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     recordingUrl: "",
     backend: "cloak",
     fingerprintSeed: seed,
+    proxyUsed: proxy,
     close: async () => {
       await context.close().catch(() => { });
     },
@@ -121,7 +143,7 @@ async function createBrowserbaseSession(opts: SessionOpts): Promise<SessionHandl
     throw new Error("browserbase backend requires { bb, projectId }");
   }
   const viewport = opts.viewport || { width: 1920, height: 1080 };
-  const slowMo = opts.slowMo ?? 250;
+  const slowMo = opts.slowMo ?? 100;
 
   let session: any = null;
   for (let attempt = 1; attempt <= 3; attempt++) {

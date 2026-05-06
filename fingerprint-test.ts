@@ -108,9 +108,31 @@ async function probeOnce(idx: number, bb: Browserbase | null): Promise<Capture> 
     for (const hit of cap.rawJsonHits) {
       const b = hit.body;
       if (b.visitorId && !cap.visitorId) cap.visitorId = b.visitorId;
+      if (b.identification?.visitor_id && !cap.visitorId) cap.visitorId = b.identification.visitor_id;
       if (b.products) cap.smartSignals = b.products;
       if (b.bot || b.botd) cap.bot = b.bot || b.botd;
       if (b.products?.botd) cap.bot = b.products.botd;
+      // Demo v4 event payload: hoist key signals into smartSignals for analyzer
+      if (b.event_id && !cap.smartSignals) {
+        cap.smartSignals = {
+          suspect_score: b.suspect_score,
+          tampering: b.tampering,
+          tampering_ml_score: b.tampering_ml_score,
+          tampering_details: b.tampering_details,
+          virtual_machine: b.virtual_machine,
+          virtual_machine_ml_score: b.virtual_machine_ml_score,
+          vpn: b.vpn,
+          vpn_confidence: b.vpn_confidence,
+          vpn_methods: b.vpn_methods,
+          incognito: b.incognito,
+          proxy: b.proxy,
+          proxy_details: b.proxy_details,
+          ip_address: b.ip_address,
+          ip_geolocation: b.ip_info?.v4?.geolocation,
+          asn_name: b.ip_info?.v4?.asn_name,
+          browser_details: b.browser_details,
+        };
+      }
     }
 
     const shotPath = path.join(OUT_DIR, `session-${idx}-${handle.sessionId.replace(/[^a-z0-9-]/gi, "_")}.jpg`);

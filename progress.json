@@ -1,0 +1,24 @@
+{
+  "updatedAt": "2026-05-06T02:34:10.365Z",
+  "rows": [
+    {
+      "rowIndex": 0,
+      "email": "phuttasopit@hotmail.co.th",
+      "status": "done",
+      "currentBatch": 1,
+      "sites": {
+        "joe": {
+          "outcome": "success",
+          "attempts": 1
+        },
+        "ignition": {
+          "outcome": "tempdisabled",
+          "attempts": 0
+        }
+      },
+      "sessionId": "cloak-518a8e4b-21768",
+      "recordingUrl": "",
+      "tempDisabledUntil": "2026-05-06T03:34:09.617Z"
+    }
+  ]
+}

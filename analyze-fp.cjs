@@ -24,5 +24,9 @@ for (const s of r) {
   console.log("architecture:", a.architecture);
   console.log("locale:", a.date_time_locale);
   console.log("os_mismatch:", b.vpn_methods && b.vpn_methods.os_mismatch);
+  const ipv4 = b.ip_info && b.ip_info.v4;
+  const geo = ipv4 && ipv4.geolocation;
+  console.log("ip:", b.ip_address, "| asn:", ipv4 && ipv4.asn_name, "| city:", geo && geo.city_name, geo && geo.country_code);
+  console.log("proxy:", b.proxy, b.proxy_details && b.proxy_details.provider, "| vpn:", b.vpn, b.vpn_confidence);
 }
 
