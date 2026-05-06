@@ -1,0 +1,685 @@
+[
+  {
+    "sessionIdx": 1,
+    "sessionId": "d43bf194-86bf-44ae-aab7-996cbc30312b",
+    "recordingUrl": "https://www.browserbase.com/sessions/d43bf194-86bf-44ae-aab7-996cbc30312b",
+    "rawJsonHits": [
+      {
+        "url": "https://demo.fingerprint.com/api/event/v4/1778018625487.DwCHN5",
+        "body": {
+          "event_id": "1778018625487.DwCHN5",
+          "timestamp": 1778018625500,
+          "linked_id": "session_id_f89d1025",
+          "environment_id": "ae_83d51ca3dcde8777",
+          "sdk": {
+            "platform": "js",
+            "version": "4.0.3",
+            "integrations": [
+              {
+                "name": "fingerprintjs-pro-cloudfront",
+                "version": "2.2.0"
+              },
+              {
+                "name": "fingerprintjs-pro-react",
+                "version": "3.0.0"
+              }
+            ]
+          },
+          "replayed": false,
+          "identification": {
+            "visitor_id": "0CF0GpNrlAWaUgAQNfYu",
+            "confidence": {
+              "score": 0.9,
+              "version": "v1.1"
+            },
+            "visitor_found": true,
+            "first_seen_at": 1778017150912,
+            "last_seen_at": 1778018457584
+          },
+          "url": "https://demo.fingerprint.com/playground",
+          "ip_address": "125.63.8.61",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          "browser_details": {
+            "browser_name": "Chrome",
+            "browser_major_version": "126",
+            "browser_full_version": "126.0.0",
+            "os": "Windows",
+            "os_version": "11",
+            "device": "Other"
+          },
+          "bot": "bad",
+          "bot_type": "browser_automation_studio",
+          "developer_tools": false,
+          "ip_blocklist": {
+            "email_spam": false,
+            "attack_source": false,
+            "tor_node": false
+          },
+          "ip_info": {
+            "v4": {
+              "address": "125.63.8.61",
+              "geolocation": {
+                "accuracy_radius": 20,
+                "latitude": -37.814,
+                "longitude": 144.96332,
+                "postal_code": "3000",
+                "timezone": "Australia/Melbourne",
+                "city_name": "Melbourne",
+                "country_code": "AU",
+                "country_name": "Australia",
+                "continent_code": "OC",
+                "continent_name": "Oceania",
+                "subdivisions": [
+                  {
+                    "iso_code": "VIC",
+                    "name": "Victoria"
+                  }
+                ]
+              },
+              "asn": "38195",
+              "asn_name": "Superloop",
+              "asn_network": "125.63.0.0/19",
+              "asn_type": "isp",
+              "datacenter_result": false
+            }
+          },
+          "proxy": true,
+          "proxy_confidence": "low",
+          "proxy_details": {
+            "proxy_type": "residential",
+            "last_seen_at": 1777420800000,
+            "provider": "Proxy-Seller"
+          },
+          "incognito": false,
+          "privacy_settings": false,
+          "suspect_score": 44,
+          "tampering": true,
+          "tampering_confidence": "high",
+          "tampering_ml_score": 0.9999,
+          "tampering_details": {
+            "anomaly_score": 1,
+            "anti_detect_browser": true
+          },
+          "velocity": {
+            "distinct_ip": {
+              "5_minutes": 3,
+              "1_hour": 6,
+              "24_hours": 6
+            },
+            "distinct_linked_id": {
+              "5_minutes": 3,
+              "1_hour": 6,
+              "24_hours": 6
+            },
+            "distinct_country": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "events": {
+              "5_minutes": 3,
+              "1_hour": 6,
+              "24_hours": 6
+            },
+            "ip_events": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "distinct_ip_by_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "distinct_visitor_id_by_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            }
+          },
+          "virtual_machine": true,
+          "virtual_machine_ml_score": 0.979,
+          "vpn": false,
+          "vpn_confidence": "medium",
+          "vpn_origin_timezone": "Australia/Melbourne",
+          "vpn_methods": {
+            "timezone_mismatch": false,
+            "public_vpn": false,
+            "auxiliary_mobile": false,
+            "os_mismatch": false,
+            "relay": false
+          },
+          "high_activity_device": false,
+          "raw_device_attributes": {
+            "font_preferences": {
+              "default": 149.3125,
+              "serif": 149.3125,
+              "sans": 144.015625,
+              "mono": 132.609375,
+              "apple": 149.3125,
+              "min": 9.34375,
+              "system": 144.640625
+            },
+            "emoji": {
+              "font": "\"Times New Roman\"",
+              "width": 1597.078125,
+              "height": 17,
+              "top": 9,
+              "bottom": 26,
+              "left": 8,
+              "right": 1605.078125,
+              "x": 8,
+              "y": 9
+            },
+            "fonts": [],
+            "device_memory": 16,
+            "timezone": "Australia/Melbourne",
+            "canvas": {
+              "winding": true,
+              "geometry": "2179b48bae2d564d33eadf7e35c993d8",
+              "text": "347da8d2998a1a05219cfb50e2b42b4c"
+            },
+            "languages": [
+              [
+                "en-AU"
+              ]
+            ],
+            "webgl_extensions": {
+              "context_attributes": "6b1ed336830d2bc96442a9d76373252a",
+              "parameters": "3649a5f2a375c04762da32de699eb915",
+              "shader_precisions": "38a06fe03c499fb674a257f2e361878a",
+              "extensions": "a96513a0dc5a765b2c5cc7b5cc6d7c18",
+              "extension_parameters": "003f43d00ddcea29c1b1a9be057f4f31",
+              "unsupported_extensions": []
+            },
+            "webgl_basics": {
+              "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+              "vendor": "WebKit",
+              "vendor_unmasked": "Google Inc. (NVIDIA)",
+              "renderer": "WebKit WebGL",
+              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3060 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+              "shading_language_version": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
+            },
+            "screen_resolution": [
+              1920,
+              1080
+            ],
+            "touch_support": {
+              "touch_event": false,
+              "touch_start": false,
+              "max_touch_points": 0
+            },
+            "architecture": 255,
+            "cookies_enabled": true,
+            "hardware_concurrency": 8,
+            "date_time_locale": "en-AU",
+            "vendor": "Google Inc.",
+            "color_depth": 24,
+            "platform": "Win32",
+            "session_storage": true,
+            "local_storage": true,
+            "audio": 124.04347544135817,
+            "indexed_db": true,
+            "math": "5f030fa7d2e5f9f757bfaf81642eb1a6",
+            "font_hash": "d751713988987e9331980363e24189ce",
+            "timezone_offset": "+10:00"
+          }
+        }
+      }
+    ],
+    "pageText": "",
+    "bot": "bad"
+  },
+  {
+    "sessionIdx": 2,
+    "sessionId": "6761e01f-2cb1-4e89-8391-692ec9e7e11f",
+    "recordingUrl": "https://www.browserbase.com/sessions/6761e01f-2cb1-4e89-8391-692ec9e7e11f",
+    "rawJsonHits": [
+      {
+        "url": "https://demo.fingerprint.com/api/event/v4/1778018648881.eKW75l",
+        "body": {
+          "event_id": "1778018648881.eKW75l",
+          "timestamp": 1778018648896,
+          "linked_id": "session_id_74274304",
+          "environment_id": "ae_83d51ca3dcde8777",
+          "sdk": {
+            "platform": "js",
+            "version": "4.0.3",
+            "integrations": [
+              {
+                "name": "fingerprintjs-pro-cloudfront",
+                "version": "2.2.0"
+              },
+              {
+                "name": "fingerprintjs-pro-react",
+                "version": "3.0.0"
+              }
+            ]
+          },
+          "replayed": false,
+          "identification": {
+            "visitor_id": "Jttt90gH7iqC07OXdQku",
+            "confidence": {
+              "score": 0.99,
+              "version": "v1.1"
+            },
+            "visitor_found": true,
+            "first_seen_at": 1778017109875,
+            "last_seen_at": 1778017109875
+          },
+          "url": "https://demo.fingerprint.com/playground",
+          "ip_address": "115.64.107.165",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+          "browser_details": {
+            "browser_name": "Chrome",
+            "browser_major_version": "126",
+            "browser_full_version": "126.0.0",
+            "os": "Windows",
+            "os_version": "11",
+            "device": "Other"
+          },
+          "bot": "bad",
+          "bot_type": "browser_automation_studio",
+          "developer_tools": false,
+          "ip_blocklist": {
+            "email_spam": false,
+            "attack_source": false,
+            "tor_node": false
+          },
+          "ip_info": {
+            "v4": {
+              "address": "115.64.107.165",
+              "geolocation": {
+                "accuracy_radius": 10,
+                "latitude": -37.814,
+                "longitude": 144.96332,
+                "postal_code": "3000",
+                "timezone": "Australia/Melbourne",
+                "city_name": "Melbourne",
+                "country_code": "AU",
+                "country_name": "Australia",
+                "continent_code": "OC",
+                "continent_name": "Oceania",
+                "subdivisions": [
+                  {
+                    "iso_code": "VIC",
+                    "name": "Victoria"
+                  }
+                ]
+              },
+              "asn": "7545",
+              "asn_name": "TPG Telecom Limited",
+              "asn_network": "115.64.0.0/16",
+              "asn_type": "isp",
+              "datacenter_result": false
+            }
+          },
+          "proxy": false,
+          "proxy_confidence": "high",
+          "incognito": false,
+          "privacy_settings": false,
+          "suspect_score": 43,
+          "tampering": true,
+          "tampering_confidence": "high",
+          "tampering_ml_score": 0.9999,
+          "tampering_details": {
+            "anomaly_score": 1,
+            "anti_detect_browser": true
+          },
+          "velocity": {
+            "distinct_ip": {
+              "5_minutes": 1,
+              "1_hour": 2,
+              "24_hours": 2
+            },
+            "distinct_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 2,
+              "24_hours": 2
+            },
+            "distinct_country": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "events": {
+              "5_minutes": 1,
+              "1_hour": 2,
+              "24_hours": 2
+            },
+            "ip_events": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "distinct_ip_by_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "distinct_visitor_id_by_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            }
+          },
+          "virtual_machine": true,
+          "virtual_machine_ml_score": 0.816,
+          "vpn": false,
+          "vpn_confidence": "medium",
+          "vpn_origin_timezone": "Australia/Melbourne",
+          "vpn_methods": {
+            "timezone_mismatch": false,
+            "public_vpn": false,
+            "auxiliary_mobile": false,
+            "os_mismatch": false,
+            "relay": false
+          },
+          "high_activity_device": false,
+          "raw_device_attributes": {
+            "font_preferences": {
+              "default": 149.3125,
+              "serif": 149.3125,
+              "sans": 144.015625,
+              "mono": 132.609375,
+              "apple": 149.3125,
+              "min": 9.34375,
+              "system": 144.640625
+            },
+            "emoji": {
+              "font": "\"Times New Roman\"",
+              "width": 1597.078125,
+              "height": 17,
+              "top": 9,
+              "bottom": 26,
+              "left": 8,
+              "right": 1605.078125,
+              "x": 8,
+              "y": 9
+            },
+            "fonts": [],
+            "device_memory": 16,
+            "timezone": "Australia/Melbourne",
+            "canvas": {
+              "winding": true,
+              "geometry": "6618d576b3192c00d4bf70c0926d356d",
+              "text": "484d3c49eb18b0b3c881836c8d2d9fee"
+            },
+            "languages": [
+              [
+                "en-AU"
+              ]
+            ],
+            "webgl_extensions": {
+              "context_attributes": "6b1ed336830d2bc96442a9d76373252a",
+              "parameters": "3649a5f2a375c04762da32de699eb915",
+              "shader_precisions": "38a06fe03c499fb674a257f2e361878a",
+              "extensions": "a96513a0dc5a765b2c5cc7b5cc6d7c18",
+              "extension_parameters": "003f43d00ddcea29c1b1a9be057f4f31",
+              "unsupported_extensions": []
+            },
+            "webgl_basics": {
+              "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+              "vendor": "WebKit",
+              "vendor_unmasked": "Google Inc. (NVIDIA)",
+              "renderer": "WebKit WebGL",
+              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+              "shading_language_version": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
+            },
+            "screen_resolution": [
+              1920,
+              1080
+            ],
+            "touch_support": {
+              "touch_event": false,
+              "touch_start": false,
+              "max_touch_points": 0
+            },
+            "architecture": 255,
+            "cookies_enabled": true,
+            "hardware_concurrency": 16,
+            "date_time_locale": "en-AU",
+            "vendor": "Google Inc.",
+            "color_depth": 24,
+            "platform": "Win32",
+            "session_storage": true,
+            "local_storage": true,
+            "audio": 124.04347537396825,
+            "indexed_db": true,
+            "math": "5f030fa7d2e5f9f757bfaf81642eb1a6",
+            "font_hash": "d751713988987e9331980363e24189ce",
+            "timezone_offset": "+10:00"
+          }
+        }
+      }
+    ],
+    "pageText": "",
+    "bot": "bad"
+  },
+  {
+    "sessionIdx": 3,
+    "sessionId": "d2ebb2ba-f7f3-4926-aacb-fd9a8ba53c4d",
+    "recordingUrl": "https://www.browserbase.com/sessions/d2ebb2ba-f7f3-4926-aacb-fd9a8ba53c4d",
+    "rawJsonHits": [
+      {
+        "url": "https://demo.fingerprint.com/api/event/v4/1778018674176.KNnkP1",
+        "body": {
+          "event_id": "1778018674176.KNnkP1",
+          "timestamp": 1778018674185,
+          "linked_id": "session_id_3164f355",
+          "environment_id": "ae_83d51ca3dcde8777",
+          "sdk": {
+            "platform": "js",
+            "version": "4.0.3",
+            "integrations": [
+              {
+                "name": "fingerprintjs-pro-cloudfront",
+                "version": "2.2.0"
+              },
+              {
+                "name": "fingerprintjs-pro-react",
+                "version": "3.0.0"
+              }
+            ]
+          },
+          "replayed": false,
+          "identification": {
+            "visitor_id": "Jttt90gH7iqC07OXdQku",
+            "confidence": {
+              "score": 0.99,
+              "version": "v1.1"
+            },
+            "visitor_found": true,
+            "first_seen_at": 1778017109875,
+            "last_seen_at": 1778018648896
+          },
+          "url": "https://demo.fingerprint.com/playground",
+          "ip_address": "210.1.200.32",
+          "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+          "browser_details": {
+            "browser_name": "Chrome",
+            "browser_major_version": "125",
+            "browser_full_version": "125.0.0",
+            "os": "Windows",
+            "os_version": "11",
+            "device": "Other"
+          },
+          "bot": "bad",
+          "bot_type": "browser_automation_studio",
+          "developer_tools": false,
+          "ip_blocklist": {
+            "email_spam": false,
+            "attack_source": false,
+            "tor_node": false
+          },
+          "ip_info": {
+            "v4": {
+              "address": "210.1.200.32",
+              "geolocation": {
+                "accuracy_radius": 20,
+                "latitude": -37.814,
+                "longitude": 144.96332,
+                "postal_code": "3000",
+                "timezone": "Australia/Melbourne",
+                "city_name": "Melbourne",
+                "country_code": "AU",
+                "country_name": "Australia",
+                "continent_code": "OC",
+                "continent_name": "Oceania",
+                "subdivisions": [
+                  {
+                    "iso_code": "VIC",
+                    "name": "Victoria"
+                  }
+                ]
+              },
+              "asn": "18390",
+              "asn_name": "Spintel Pty Ltd",
+              "asn_network": "210.1.192.0/19",
+              "asn_type": "isp",
+              "datacenter_result": false
+            }
+          },
+          "proxy": false,
+          "proxy_confidence": "high",
+          "incognito": false,
+          "privacy_settings": false,
+          "suspect_score": 43,
+          "tampering": true,
+          "tampering_confidence": "high",
+          "tampering_ml_score": 0.9999,
+          "tampering_details": {
+            "anomaly_score": 1,
+            "anti_detect_browser": true
+          },
+          "velocity": {
+            "distinct_ip": {
+              "5_minutes": 2,
+              "1_hour": 3,
+              "24_hours": 3
+            },
+            "distinct_linked_id": {
+              "5_minutes": 2,
+              "1_hour": 3,
+              "24_hours": 3
+            },
+            "distinct_country": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "events": {
+              "5_minutes": 2,
+              "1_hour": 3,
+              "24_hours": 3
+            },
+            "ip_events": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "distinct_ip_by_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            },
+            "distinct_visitor_id_by_linked_id": {
+              "5_minutes": 1,
+              "1_hour": 1,
+              "24_hours": 1
+            }
+          },
+          "virtual_machine": true,
+          "virtual_machine_ml_score": 0.938,
+          "vpn": false,
+          "vpn_confidence": "medium",
+          "vpn_origin_timezone": "Australia/Melbourne",
+          "vpn_methods": {
+            "timezone_mismatch": false,
+            "public_vpn": false,
+            "auxiliary_mobile": false,
+            "os_mismatch": false,
+            "relay": false
+          },
+          "high_activity_device": false,
+          "raw_device_attributes": {
+            "font_preferences": {
+              "default": 149.3125,
+              "serif": 149.3125,
+              "sans": 144.015625,
+              "mono": 132.609375,
+              "apple": 149.3125,
+              "min": 9.34375,
+              "system": 144.640625
+            },
+            "emoji": {
+              "font": "\"Times New Roman\"",
+              "width": 1597.078125,
+              "height": 17,
+              "top": 9,
+              "bottom": 26,
+              "left": 8,
+              "right": 1605.078125,
+              "x": 8,
+              "y": 9
+            },
+            "fonts": [],
+            "device_memory": 16,
+            "timezone": "Australia/Melbourne",
+            "canvas": {
+              "winding": true,
+              "geometry": "2179b48bae2d564d33eadf7e35c993d8",
+              "text": "bb25d1f8cf4a154105a12b4765372be6"
+            },
+            "languages": [
+              [
+                "en-AU"
+              ]
+            ],
+            "webgl_extensions": {
+              "context_attributes": "6b1ed336830d2bc96442a9d76373252a",
+              "parameters": "3649a5f2a375c04762da32de699eb915",
+              "shader_precisions": "38a06fe03c499fb674a257f2e361878a",
+              "extensions": "a96513a0dc5a765b2c5cc7b5cc6d7c18",
+              "extension_parameters": "003f43d00ddcea29c1b1a9be057f4f31",
+              "unsupported_extensions": []
+            },
+            "webgl_basics": {
+              "version": "WebGL 1.0 (OpenGL ES 2.0 Chromium)",
+              "vendor": "WebKit",
+              "vendor_unmasked": "Google Inc. (NVIDIA)",
+              "renderer": "WebKit WebGL",
+              "renderer_unmasked": "ANGLE (NVIDIA, NVIDIA GeForce GTX 1660 Direct3D11 vs_5_0 ps_5_0, D3D11)",
+              "shading_language_version": "WebGL GLSL ES 1.0 (OpenGL ES GLSL ES 1.0 Chromium)"
+            },
+            "screen_resolution": [
+              1920,
+              1080
+            ],
+            "touch_support": {
+              "touch_event": false,
+              "touch_start": false,
+              "max_touch_points": 0
+            },
+            "architecture": 255,
+            "cookies_enabled": true,
+            "hardware_concurrency": 16,
+            "date_time_locale": "en-AU",
+            "vendor": "Google Inc.",
+            "color_depth": 24,
+            "platform": "Win32",
+            "session_storage": true,
+            "local_storage": true,
+            "audio": 124.0434752787769,
+            "indexed_db": true,
+            "math": "5f030fa7d2e5f9f757bfaf81642eb1a6",
+            "font_hash": "d751713988987e9331980363e24189ce",
+            "timezone_offset": "+10:00"
+          }
+        }
+      }
+    ],
+    "pageText": "",
+    "bot": "bad"
+  }
+]
