@@ -19,10 +19,22 @@ import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { launchContext } from "cloakbrowser";
 import { getConsistentHardware, getHardwareArgs, type HardwareProfile } from "./profile-determinism.js";
 import { alignGeoToProxy, type GeoProfile } from "./profile-geo-alignment.js";
-import { buildCredentialNoiseProfile, type CredentialNoiseProfile } from "./profile-credential-noise.js";
+import {
+  buildCredentialNoiseProfile,
+  getCanvasNoiseInjectionScript,
+  getWebGLNoiseInjectionScript,
+  type CredentialNoiseProfile,
+} from "./profile-credential-noise.js";
 import { getConsistentUserAgent, getUserAgentArgs, type UAProfile } from "./profile-useragent.js";
 import { getFontProfile, type FontProfile } from "./profile-fonts.js";
 import { getConsistentResolution, getViewport, type Resolution } from "./profile-resolution.js";
+import { getInteractionPattern, type InteractionPattern } from "./profile-interaction.js";
+import {
+  getExtensionProfile,
+  getExtensionInjectionScript,
+  type ExtensionProfile,
+} from "./profile-extensions.js";
+import { getCacheProfile, getCacheInjectionScript, type CacheProfile } from "./profile-cache.js";
 
 export type Backend = "cloak" | "browserbase";
 
@@ -93,6 +105,9 @@ export interface SessionHandle {
   uaProfile?: UAProfile;               // Phase-2: deterministic Chrome/Windows UA per credential (cloak only)
   fontProfile?: FontProfile;           // Phase-2: deterministic font set per credential (cloak only, observability)
   resolutionProfile?: Resolution;      // Phase-2: deterministic viewport per credential (cloak only)
+  interactionProfile?: InteractionPattern; // Phase-3: per-credential mouse/typing persona (cloak only)
+  extensionProfile?: ExtensionProfile;     // Phase-3: simulated installed extensions (cloak only)
+  cacheProfile?: CacheProfile;             // Phase-3: pre-populated localStorage breadcrumbs (cloak only)
   close: () => Promise<void>;
 }
 
@@ -129,6 +144,11 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
   // UA-derived binary flags. Falls back to a recent Win10 build when no credential is bound.
   const uaArgs = uaProfile ? getUserAgentArgs(uaProfile) : ["--fingerprint-platform-version=10.0.19045"];
 
+  // Phase-3 quality profile: interaction patterns, extension simulation, cache authenticity
+  const interactionProfile = opts.email ? getInteractionPattern(opts.email) : undefined;
+  const extensionProfile = opts.email ? getExtensionProfile(opts.email) : undefined;
+  const cacheProfile = opts.email ? getCacheProfile(opts.email, uaProfile?.chromeMajor) : undefined;
+
   // Build base launch args. Hardware-derived GPU arg replaces the static d3d11 default.
   const launchArgs = [
     `--fingerprint=${seed}`,
@@ -148,8 +168,10 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     "--metrics-recording-only",
   ];
 
+  // HEADLESS env override (default true). Set HEADLESS=false to see windows.
+  const envHeadless = (process.env.HEADLESS ?? "true").toLowerCase() !== "false";
   const context = await launchContext({
-    headless: opts.headless ?? true,
+    headless: opts.headless ?? envHeadless,
     proxy,
     geoip: !!proxy,                          // auto TZ/locale/WebRTC IP from proxy exit
     humanize: true,                          // human mouse curves + keystroke timing
@@ -160,6 +182,20 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     args: launchArgs,
     launchOptions: { slowMo },
   });
+
+  // Per-credential init scripts. Each is ADDITIVE (defines new properties or
+  // seeds empty localStorage keys) so it doesn't conflict with cloakbrowser's
+  // native C++ patches. Runs at document_start before any site JS.
+  if (noiseProfile) {
+    await context.addInitScript({ content: getCanvasNoiseInjectionScript(noiseProfile) });
+    await context.addInitScript({ content: getWebGLNoiseInjectionScript(noiseProfile) });
+  }
+  if (extensionProfile) {
+    await context.addInitScript({ content: getExtensionInjectionScript(extensionProfile) });
+  }
+  if (cacheProfile) {
+    await context.addInitScript({ content: getCacheInjectionScript(cacheProfile) });
+  }
 
   const page = context.pages()[0] ?? (await context.newPage());
 
@@ -177,6 +213,9 @@ async function createCloakSession(opts: SessionOpts): Promise<SessionHandle> {
     uaProfile,
     fontProfile,
     resolutionProfile,
+    interactionProfile,
+    extensionProfile,
+    cacheProfile,
     close: async () => {
       await context.close().catch(() => { });
     },

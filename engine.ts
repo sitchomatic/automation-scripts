@@ -454,7 +454,9 @@ export class AutomationEngine extends EventEmitter {
             handle = await createSession({
               bb: bb || undefined,
               projectId: config.projectId,
-              viewport: { width: 1920, height: 1080 },
+              // Browserbase needs an explicit viewport; cloak lets the
+              // per-credential resolution profile drive it (Phase-2).
+              viewport: BACKEND === "browserbase" ? { width: 1920, height: 1080 } : undefined,
               slowMo: 100,
               fingerprintSeed: seed,
               excludeProxies: triedProxies,
@@ -485,6 +487,19 @@ export class AutomationEngine extends EventEmitter {
             if (handle.fontProfile) {
               const fp = handle.fontProfile;
               this.log("INFO", `  Fonts: ${fp.name} (${fp.fonts.length} fonts)`);
+            }
+            if (handle.interactionProfile) {
+              const ip = handle.interactionProfile;
+              this.log("INFO", `  Interaction: ${ip.name} (mouse=${ip.mouseSpeed}, type=${ip.typingSpeed}, kbd=${ip.keystrokeDelayMs}ms)`);
+            }
+            if (handle.extensionProfile) {
+              const ex = handle.extensionProfile;
+              const names = ex.extensions.map((e) => e.name).join(", ");
+              this.log("INFO", `  Extensions: ${ex.extensions.length} (${names})`);
+            }
+            if (handle.cacheProfile) {
+              const cp = handle.cacheProfile;
+              this.log("INFO", `  Cache: last_visit ${cp.lastVisitDaysAgo}d ago, sw=${cp.serviceWorkerHint}`);
             }
 
             const page: Page = handle.page;

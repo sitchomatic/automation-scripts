@@ -1,11 +1,11 @@
 import "dotenv/config";
 import { chromium, type BrowserContext, type Page } from "playwright-core";
 import { launchContext } from "cloakbrowser";
-import { applyStealth } from "./stealth.js";
 import { DEFAULT_TARGETS } from "./engine.js";
 import { pickProxy } from "./cloak-backend.js";
+import { getExtensionProfile, getExtensionInjectionScript } from "./profile-extensions.js";
 
-type Mode = "No_Stealth" | "JS_Stealth" | "Cloak_Native";
+type Mode = "Cloak_Base" | "Cloak_With_Extensions" | "Cloak_No_Vulkan";
 
 async function parseProxy(proxyUrl: string | undefined) {
   if (!proxyUrl) return undefined;
@@ -17,49 +17,48 @@ async function parseProxy(proxyUrl: string | undefined) {
   };
 }
 
-async function createSession(mode: Mode): Promise<{ context: BrowserContext; page: Page; close: () => Promise<void> }> {
+async function createSession(mode: Mode, email: string): Promise<{ context: BrowserContext; page: Page; close: () => Promise<void> }> {
   const proxyUrl = pickProxy([]);
   const proxy = await parseProxy(proxyUrl);
 
-  if (mode === "No_Stealth" || mode === "JS_Stealth") {
-    const browser = await chromium.launch({
-      headless: true,
-      proxy: proxy ? { server: proxy.server, username: proxy.username, password: proxy.password } : undefined,
-      args: ["--disable-blink-features=AutomationControlled"]
-    });
-    const context = await browser.newContext();
-    const page = await context.newPage();
-    if (mode === "JS_Stealth") {
-      await applyStealth(page);
-    }
-    return { context, page, close: async () => { await browser.close(); } };
-  } else {
-    // Cloak Native
-    const context = await launchContext({
-      headless: true,
-      proxy: proxyUrl,
-      geoip: !!proxyUrl,
-      humanize: true,
-      args: [
-        "--fingerprint=12345",
-        "--fingerprint-platform=windows",
-        "--disable-blink-features=AutomationControlled",
-        "--use-gl=angle",
-        "--enable-features=Vulkan",
-        "--disable-features=IsolateOrigins,site-per-process,UserAgentClientHint",
-        "--enable-accelerated-2d-canvas",
-        "--enable-accelerated-video-decode",
-        "--ignore-gpu-blocklist",
-        "--metrics-recording-only",
-      ]
-    });
-    const page = context.pages()[0] || (await context.newPage());
-    return { context, page, close: async () => { await context.close(); } };
+  const baseArgs = [
+    "--fingerprint=12345",
+    "--fingerprint-platform=windows",
+    "--disable-blink-features=AutomationControlled",
+    "--use-gl=angle",
+    "--disable-features=IsolateOrigins,site-per-process,UserAgentClientHint",
+    "--enable-accelerated-2d-canvas",
+    "--enable-accelerated-video-decode",
+    "--ignore-gpu-blocklist",
+    "--metrics-recording-only",
+  ];
+
+  if (mode !== "Cloak_No_Vulkan") {
+    baseArgs.push("--enable-features=Vulkan");
   }
+
+  const context = await launchContext({
+    headless: true,
+    proxy: proxyUrl,
+    geoip: !!proxyUrl,
+    humanize: true,
+    args: baseArgs
+  });
+  
+  const page = context.pages()[0] || (await context.newPage());
+
+  if (mode === "Cloak_With_Extensions") {
+    const extProfile = getExtensionProfile(email);
+    const extScript = getExtensionInjectionScript(extProfile);
+    await page.addInitScript(extScript);
+  }
+
+  return { context, page, close: async () => { await context.close(); } };
 }
 
 async function measureLoginResponse(mode: Mode, target: typeof DEFAULT_TARGETS[0]): Promise<number | null> {
-  const session = await createSession(mode);
+  const testEmail = "speedtest@example.com";
+  const session = await createSession(mode, testEmail);
   const page = session.page;
   page.setDefaultTimeout(30000);
 
@@ -78,7 +77,7 @@ async function measureLoginResponse(mode: Mode, target: typeof DEFAULT_TARGETS[0
     const p = await page.locator(target.selectors.password).first();
     const s = await page.locator(target.selectors.submit).first();
     
-    await u.fill("test_user_benchmark@example.com");
+    await u.fill(testEmail);
     await new Promise(r => setTimeout(r, 500));
     await p.fill("wrong_password_123!");
     await new Promise(r => setTimeout(r, 500));
@@ -122,7 +121,7 @@ async function measureLoginResponse(mode: Mode, target: typeof DEFAULT_TARGETS[0
 }
 
 async function runBenchmark() {
-  const modes: Mode[] = ["No_Stealth", "JS_Stealth", "Cloak_Native"];
+  const modes: Mode[] = ["Cloak_Base", "Cloak_With_Extensions", "Cloak_No_Vulkan"];
   const runs = 3;
 
   for (const target of DEFAULT_TARGETS) {

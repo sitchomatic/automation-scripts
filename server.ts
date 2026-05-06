@@ -72,7 +72,7 @@ wss.on("connection", (ws: any) => {
           projectId: PROJECT_ID ? `${PROJECT_ID.substring(0, 8)}...` : "",
           hasApiKey: !!API_KEY,
           hasProjectId: !!PROJECT_ID,
-          concurrency: 3, // default 3, engine caps at max 5
+          concurrency: 1, // headed-debug mode
           maxRetries: 2,
           targets: DEFAULT_TARGETS.map((t) => t.name),
         },
@@ -112,11 +112,11 @@ wss.on("connection", (ws: any) => {
             return;
           }
 
-          // Default 3 concurrent credentials. Engine clamps to absolute max of 5.
+          // Concurrency 1 for live debugging / headed runs.
           const config: EngineConfig = {
             apiKey: API_KEY,
             projectId: PROJECT_ID,
-            concurrency: 3,
+            concurrency: 1,
             maxRetries: 2,
             targets: DEFAULT_TARGETS,
           };

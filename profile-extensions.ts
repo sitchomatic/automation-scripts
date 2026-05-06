@@ -79,7 +79,7 @@ export function getExtensionProfile(email: string): ExtensionProfile {
   const picks: ExtensionInfo[] = [];
   let cursor = seed;
   while (picks.length < count) {
-    cursor = (cursor * 1103515245 + 12345) >>> 0; // LCG
+    cursor = (Math.imul(cursor, 1103515245) + 12345) >>> 0; // LCG
     const idx = cursor % EXTENSION_POOL.length;
     if (used.has(idx)) continue;
     used.add(idx);
